@@ -69,5 +69,12 @@ pg_restore -h HOST -U USER -d DBNAME --clean --if-exists 20240101_000000/DBNAME.
 make test
 ```
 
-The runtime image pins `postgresql17-client`; `pg_dump` must be at least as new
-as the server, so bump the package in the `Dockerfile` if your server is newer.
+The runtime image pins `postgresql18-client` (Alpine 3.24); `pg_dump` must be at
+least as new as the server (18 can dump servers back to 9.2), so bump the package
+and the base image in the `Dockerfile` if your server is newer.
+
+Dumps are custom-format archives. pg_dump 18 writes archive version 1.16, which
+needs `pg_restore` 17 or newer to read; restore with the client from this image
+(or any 17+ client), whatever major version the target server is. Restoring into a
+server older than 17 logs one ignorable `transaction_timeout` error, so avoid
+`-1` / `--exit-on-error` there.
