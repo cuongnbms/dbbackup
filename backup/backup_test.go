@@ -77,4 +77,7 @@ func TestPerformBackupAlwaysReturnsAReport(t *testing.T) {
 	if rep.Duration <= 0 {
 		t.Fatal("the report should carry how long the run took")
 	}
+	if rep.Stage != "connect" {
+		t.Fatalf("expected stage %q for a missing PG_HOST, got %q", "connect", rep.Stage)
+	}
 }

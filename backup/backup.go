@@ -87,6 +87,7 @@ func PerformBackup(ctx context.Context, cfg *config.Config) (*Report, error) {
 	}
 	rep.Databases = databases
 
+	rep.Stage = "prepare"
 	if err := os.MkdirAll(cfg.BackupDir, 0o755); err != nil {
 		return rep, fmt.Errorf("create backup dir: %w", err)
 	}
@@ -163,6 +164,7 @@ func PerformBackup(ctx context.Context, cfg *config.Config) (*Report, error) {
 		return rep, err
 	}
 	if rep.UploadErr != nil {
+		rep.Stage = "upload"
 		return rep, rep.UploadErr
 	}
 
