@@ -63,6 +63,16 @@ unzip 20240101_000000.zip -d 20240101_000000   # contains one DBNAME.backup per 
 pg_restore -h HOST -U USER -d DBNAME --clean --if-exists 20240101_000000/DBNAME.backup
 ```
 
+Each archive also contains `globals.sql` — the cluster's roles, tablespaces and
+grants, which no per-database `pg_dump` captures. Restore it first, before any
+`pg_restore`, or every `OWNER TO` and `GRANT` will fail.
+
+`globals.sql` contains SCRAM password hashes. With `ENCRYPT_KEY` unset those
+hashes sit in plaintext inside the archive and in blob storage. If the backup
+user cannot read `pg_authid` the dump falls back to `--no-role-passwords`
+automatically and logs a warning; restored roles then need their passwords set
+by hand.
+
 ## Development
 
 ```sh

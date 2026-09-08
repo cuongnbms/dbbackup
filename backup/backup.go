@@ -85,6 +85,10 @@ func PerformBackup(ctx context.Context, cfg *config.Config) error {
 	// (the happy path removes it explicitly before cleanup runs).
 	defer os.RemoveAll(workDir)
 
+	if err := dumpGlobals(ctx, conn, workDir); err != nil {
+		return err
+	}
+
 	for _, dbname := range databases {
 		if err := dumpDatabase(ctx, conn, dbname, workDir, cfg.ExcludeTables[dbname]); err != nil {
 			return err
