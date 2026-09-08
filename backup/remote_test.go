@@ -157,8 +157,37 @@ func TestShipToRemotesSkipsPruneWhenKeepIsUnlimited(t *testing.T) {
 }
 
 func TestRemoteKey(t *testing.T) {
-	if got := remoteKey("/backup/20240101_000000.zip.gpg"); got != "databases/20240101_000000.zip.gpg" {
+	if got := remoteKey("databases/", "/backup/20240101_000000.zip.gpg"); got != "databases/20240101_000000.zip.gpg" {
 		t.Fatalf("got %s", got)
+	}
+	if got := remoteKey("myproject/dumps/", "/backup/20240101_000000.zip.gpg"); got != "myproject/dumps/20240101_000000.zip.gpg" {
+		t.Fatalf("got %s", got)
+	}
+}
+
+// The prefix is per destination, so each target has to be built with its own
+// rather than with one value shared across the run.
+func TestRemoteDestinationsGivesEachTargetItsOwnPrefix(t *testing.T) {
+	isolateAWSConfig(t)
+	enableABS(t)
+	t.Setenv("S3_BUCKET", "my-backups")
+	t.Setenv("AWS_REGION", "ap-southeast-1")
+	var rb config.Config
+	rb.RemoteBackup.AzureBlobStorage = config.RemoteTarget{Enable: true, Prefix: "abs-dumps/"}
+	rb.RemoteBackup.AWSS3 = config.RemoteTarget{Enable: true, Prefix: "s3-dumps/"}
+
+	dests, err := remoteDestinations(rb.RemoteBackup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dests) != 2 {
+		t.Fatalf("expected both destinations, got %+v", dests)
+	}
+	if got := dests[0].target.(*absTarget).prefix; got != "abs-dumps/" {
+		t.Fatalf("Azure prefix: got %q", got)
+	}
+	if got := dests[1].target.(*s3Target).prefix; got != "s3-dumps/" {
+		t.Fatalf("S3 prefix: got %q", got)
 	}
 }
 

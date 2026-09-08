@@ -24,7 +24,7 @@ func TestS3FromEnvNeedsABucket(t *testing.T) {
 	isolateAWSConfig(t)
 	t.Setenv("AWS_REGION", "ap-southeast-1")
 
-	_, err := s3FromEnv()
+	_, err := s3FromEnv("databases/")
 	if err == nil || !strings.Contains(err.Error(), "S3_BUCKET") {
 		t.Fatalf("expected an error naming S3_BUCKET, got %v", err)
 	}
@@ -36,7 +36,7 @@ func TestS3FromEnvNeedsARegion(t *testing.T) {
 	isolateAWSConfig(t)
 	t.Setenv("S3_BUCKET", "my-backups")
 
-	_, err := s3FromEnv()
+	_, err := s3FromEnv("databases/")
 	if err == nil || !strings.Contains(err.Error(), "AWS_REGION") {
 		t.Fatalf("expected an error naming AWS_REGION, got %v", err)
 	}
@@ -47,12 +47,15 @@ func TestS3FromEnvUsesTheConfiguredBucket(t *testing.T) {
 	t.Setenv("S3_BUCKET", "my-backups")
 	t.Setenv("AWS_REGION", "ap-southeast-1")
 
-	target, err := s3FromEnv()
+	target, err := s3FromEnv("databases/")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if target.bucket != "my-backups" {
 		t.Fatalf("got bucket %q", target.bucket)
+	}
+	if target.prefix != "databases/" {
+		t.Fatalf("got prefix %q", target.prefix)
 	}
 	if !strings.Contains(target.Name(), "S3") {
 		t.Fatalf("the name reaches notifications, it should say S3: %q", target.Name())
@@ -67,7 +70,7 @@ func TestS3FromEnvUsesPathStyleWithACustomEndpoint(t *testing.T) {
 	t.Setenv("AWS_REGION", "us-east-1")
 	t.Setenv("S3_ENDPOINT", "http://minio:9000")
 
-	target, err := s3FromEnv()
+	target, err := s3FromEnv("databases/")
 	if err != nil {
 		t.Fatal(err)
 	}

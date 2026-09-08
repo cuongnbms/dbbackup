@@ -15,6 +15,9 @@ import (
 type s3Target struct {
 	client *s3.Client
 	bucket string
+	// prefix is the folder artifacts are stored under in the bucket. It also
+	// bounds Cleanup, which never lists or deletes outside it.
+	prefix string
 	// pathStyle records the addressing the client was built with, so a test
 	// can tell that a custom endpoint switched it on.
 	pathStyle bool
@@ -23,12 +26,13 @@ type s3Target struct {
 // s3FromEnv builds the S3 client from the standard AWS chain: environment
 // variables, the shared config files, or the instance/task role. Only the
 // bucket is ours to ask for, which is what lets the container run on an IAM
-// role with no static keys at all.
+// role with no static keys at all. The prefix comes from config rather than the
+// environment, because it is layout rather than credentials.
 //
 // S3_ENDPOINT points at an S3-compatible store (MinIO, Ceph, R2). Those serve
 // buckets as a path rather than a subdomain, so it also switches the client to
 // path-style addressing.
-func s3FromEnv() (*s3Target, error) {
+func s3FromEnv(prefix string) (*s3Target, error) {
 	bucket := os.Getenv("S3_BUCKET")
 	if bucket == "" {
 		return nil, fmt.Errorf("missing required environment variable: S3_BUCKET")
@@ -52,12 +56,12 @@ func s3FromEnv() (*s3Target, error) {
 			o.UsePathStyle = true
 		}
 	})
-	return &s3Target{client: client, bucket: bucket, pathStyle: pathStyle}, nil
+	return &s3Target{client: client, bucket: bucket, prefix: prefix, pathStyle: pathStyle}, nil
 }
 
 func (t *s3Target) Name() string { return "AWS S3" }
 
-// Upload streams filePath to the bucket under databases/<basename>. The
+// Upload streams filePath to the bucket under <prefix><basename>. The
 // manager uploads in parts, so an archive past the 5 GB single-PUT limit still
 // goes up, and a failed part is retried on its own.
 func (t *s3Target) Upload(ctx context.Context, filePath string) error {
@@ -67,7 +71,7 @@ func (t *s3Target) Upload(ctx context.Context, filePath string) error {
 	}
 	defer file.Close()
 
-	key := remoteKey(filePath)
+	key := remoteKey(t.prefix, filePath)
 	uploader := manager.NewUploader(t.client)
 	if _, err := uploader.Upload(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(t.bucket),
@@ -80,12 +84,12 @@ func (t *s3Target) Upload(ctx context.Context, filePath string) error {
 	return nil
 }
 
-// Cleanup keeps the keepCount newest objects under databases/.
+// Cleanup keeps the keepCount newest objects under the target's prefix.
 func (t *s3Target) Cleanup(ctx context.Context, keepCount int) error {
 	var keys []string
 	pager := s3.NewListObjectsV2Paginator(t.client, &s3.ListObjectsV2Input{
 		Bucket: aws.String(t.bucket),
-		Prefix: aws.String(remotePrefix),
+		Prefix: aws.String(t.prefix),
 	})
 	for pager.HasMorePages() {
 		page, err := pager.NextPage(ctx)

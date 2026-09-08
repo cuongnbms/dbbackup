@@ -144,3 +144,58 @@ func TestReadConfigRejectsNegativeMinUploadSpeed(t *testing.T) {
 		t.Fatalf("expected an error naming min_upload_speed_kbps, got %v", err)
 	}
 }
+
+func TestReadConfigDefaultsThePrefixOnBothDestinations(t *testing.T) {
+	cfg, err := ReadConfig(write(t, "keep: 2\ncron: '0 0 * * *'\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.RemoteBackup.AWSS3.Prefix; got != "databases/" {
+		t.Fatalf("S3 prefix: got %q", got)
+	}
+	if got := cfg.RemoteBackup.AzureBlobStorage.Prefix; got != "databases/" {
+		t.Fatalf("Azure prefix: got %q", got)
+	}
+}
+
+// A config that names one destination's prefix must not reset the other's to
+// empty: the defaults are per destination, not one shared fallback.
+func TestReadConfigKeepsTheDefaultPrefixOnTheOtherDestination(t *testing.T) {
+	cfg, err := ReadConfig(write(t, "keep: 2\ncron: '0 0 * * *'\nremote_backup:\n  aws_s3:\n    prefix: myproject/dumps/\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.RemoteBackup.AWSS3.Prefix; got != "myproject/dumps/" {
+		t.Fatalf("S3 prefix: got %q", got)
+	}
+	if got := cfg.RemoteBackup.AzureBlobStorage.Prefix; got != "databases/" {
+		t.Fatalf("Azure prefix: got %q", got)
+	}
+}
+
+// An operator writes the prefix the way they think of a folder. Every spelling
+// has to reach the backends as the same key prefix, or the same config would
+// upload to two different places depending on the slashes.
+func TestReadConfigNormalisesThePrefix(t *testing.T) {
+	for _, written := range []string{"dumps", "dumps/", "/dumps", "/dumps/"} {
+		cfg, err := ReadConfig(write(t, "keep: 2\ncron: '0 0 * * *'\nremote_backup:\n  aws_s3:\n    prefix: '"+written+"'\n"))
+		if err != nil {
+			t.Fatalf("%q: %v", written, err)
+		}
+		if got := cfg.RemoteBackup.AWSS3.Prefix; got != "dumps/" {
+			t.Fatalf("prefix %q normalised to %q", written, got)
+		}
+	}
+}
+
+// Remote cleanup lists under the prefix and deletes every name that looks like
+// a backup artifact. At the root of the bucket that reaches artifacts belonging
+// to anything else stored there, so the root is not an allowed prefix.
+func TestReadConfigRejectsAnEmptyPrefix(t *testing.T) {
+	for _, written := range []string{"''", "'/'", "'   '"} {
+		_, err := ReadConfig(write(t, "keep: 2\ncron: '0 0 * * *'\nremote_backup:\n  azure_blob_storage:\n    prefix: "+written+"\n"))
+		if err == nil || !strings.Contains(err.Error(), "prefix") {
+			t.Fatalf("prefix %s: expected an error naming prefix, got %v", written, err)
+		}
+	}
+}

@@ -4,18 +4,44 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strings"
 
 	"dbbackup/notify"
 	"gopkg.in/yaml.v3"
 )
 
 // RemoteTarget configures one offsite destination for the backup artifact.
-// Both backends carry the same two knobs, so they share this shape.
+// Both backends carry the same three knobs, so they share this shape.
 type RemoteTarget struct {
 	Enable bool `yaml:"enable"`
 	// Keep is the number of newest backup artifacts kept at the destination.
 	// 0 means unlimited. Counted separately from local retention.
 	Keep int `yaml:"keep"`
+	// Prefix is the folder every artifact is stored under at this destination,
+	// defaulting to DefaultPrefix. It is per destination so one bucket shared
+	// with other things can be given a prefix of its own, and it scopes Keep:
+	// remote retention only ever looks at, and deletes under, this prefix.
+	//
+	// Normalised on read to exactly one trailing slash and no leading one, so
+	// every spelling an operator might write reaches the backends as the same
+	// key prefix.
+	Prefix string `yaml:"prefix"`
+}
+
+// DefaultPrefix is where artifacts land at a destination that does not name a
+// prefix of its own. Every destination defaulting to the same value is what
+// lets an operator reading one destination find the matching object in another.
+const DefaultPrefix = "databases/"
+
+// normalisePrefix rewrites a prefix the way an operator wrote it into the key
+// prefix the backends use: no leading slash, exactly one trailing slash. An
+// empty result is returned as-is and rejected by validate.
+func normalisePrefix(prefix string) string {
+	trimmed := strings.Trim(strings.TrimSpace(prefix), "/")
+	if trimmed == "" {
+		return ""
+	}
+	return trimmed + "/"
 }
 
 // RemoteBackup lists every offsite destination the artifact can be shipped to.
@@ -76,9 +102,15 @@ func ReadConfig(filePath string) (*Config, error) {
 	}
 
 	cfg := Config{BackupDir: "/backup"}
+	// Pre-set before unmarshal so an absent key keeps the default while a
+	// present one overrides it, the same way backup_dir defaults.
+	cfg.RemoteBackup.AzureBlobStorage.Prefix = DefaultPrefix
+	cfg.RemoteBackup.AWSS3.Prefix = DefaultPrefix
 	if err := yaml.Unmarshal(body, &cfg); err != nil {
 		return nil, err
 	}
+	cfg.RemoteBackup.AzureBlobStorage.Prefix = normalisePrefix(cfg.RemoteBackup.AzureBlobStorage.Prefix)
+	cfg.RemoteBackup.AWSS3.Prefix = normalisePrefix(cfg.RemoteBackup.AWSS3.Prefix)
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
@@ -107,6 +139,16 @@ func (c *Config) validate() error {
 	}
 	if c.RemoteBackup.AWSS3.Keep < 0 {
 		return fmt.Errorf("remote_backup.aws_s3.keep must be >= 0")
+	}
+	// Remote cleanup lists under the prefix and deletes every name that looks
+	// like a backup artifact. At the root of a container or bucket that reaches
+	// artifacts belonging to whatever else is stored there, so the root is not
+	// an allowed prefix.
+	if c.RemoteBackup.AzureBlobStorage.Prefix == "" {
+		return fmt.Errorf("remote_backup.azure_blob_storage.prefix must not be empty: remote retention deletes under it, and the container root would reach other things stored there")
+	}
+	if c.RemoteBackup.AWSS3.Prefix == "" {
+		return fmt.Errorf("remote_backup.aws_s3.prefix must not be empty: remote retention deletes under it, and the bucket root would reach other things stored there")
 	}
 	// A negative rate yields a negative deadline, which cancels every upload
 	// before it starts. 0 is how the deadline is switched off.

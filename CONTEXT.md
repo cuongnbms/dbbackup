@@ -42,7 +42,7 @@ _Avoid_: rotation, local keep
 **Remote destination**:
 One offsite place the backup artifact is shipped to — an Azure blob container or
 an S3 bucket. Any number can be enabled at once, and each stores artifacts under
-the same `databases/` prefix.
+its own prefix, `databases/` by default.
 _Avoid_: provider, backend, remote
 
 **Remote retention**:

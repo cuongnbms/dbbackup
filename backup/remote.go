@@ -13,25 +13,22 @@ import (
 	"dbbackup/config"
 )
 
-// remotePrefix is the key prefix every backup artifact lives under, in every
-// remote destination. Anything else at the destination is left alone.
-const remotePrefix = "databases/"
-
-// remoteKey is where an artifact lands at a destination. Every backend uses
-// the same key, so an operator reading one destination can find the matching
-// object in the other.
-func remoteKey(filePath string) string {
-	return remotePrefix + filepath.Base(filePath)
+// remoteKey is where an artifact lands at a destination, given that
+// destination's prefix. Both backends build the key the same way, so
+// destinations left on the default prefix still hold the same key and an
+// operator reading one can find the matching object in the other.
+func remoteKey(prefix, filePath string) string {
+	return prefix + filepath.Base(filePath)
 }
 
 // remoteTarget is one offsite destination for the backup artifact.
 type remoteTarget interface {
 	// Name identifies the destination in logs and notifications.
 	Name() string
-	// Upload stores filePath under remotePrefix.
+	// Upload stores filePath under the destination's prefix.
 	Upload(ctx context.Context, filePath string) error
-	// Cleanup deletes all but the keepCount newest artifacts under
-	// remotePrefix.
+	// Cleanup deletes all but the keepCount newest artifacts under the
+	// destination's prefix.
 	Cleanup(ctx context.Context, keepCount int) error
 }
 
@@ -147,8 +144,8 @@ func remoteDestinations(rb config.RemoteBackup) ([]remoteDestination, error) {
 		}
 		dests = append(dests, remoteDestination{target: target, keep: cfg.Keep})
 	}
-	add(rb.AzureBlobStorage, func() (remoteTarget, error) { return absFromEnv() }, "Azure Blob Storage")
-	add(rb.AWSS3, func() (remoteTarget, error) { return s3FromEnv() }, "AWS S3")
+	add(rb.AzureBlobStorage, func() (remoteTarget, error) { return absFromEnv(rb.AzureBlobStorage.Prefix) }, "Azure Blob Storage")
+	add(rb.AWSS3, func() (remoteTarget, error) { return s3FromEnv(rb.AWSS3.Prefix) }, "AWS S3")
 	return dests, errors.Join(errs...)
 }
 

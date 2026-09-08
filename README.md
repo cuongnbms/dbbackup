@@ -102,8 +102,13 @@ client to path-style addressing, which is what S3-compatible stores expect; leav
 it empty for real AWS.
 
 Backups are written to `/backup/<YYYYMMDD_HHMMSS>.zip[.gpg]` locally and to
-`databases/<YYYYMMDD_HHMMSS>.zip[.gpg]` at every enabled remote destination.
-Anything else stored under that prefix is never deleted by remote retention.
+`<prefix><YYYYMMDD_HHMMSS>.zip[.gpg]` at every enabled remote destination. The
+prefix is per destination — `remote_backup.<destination>.prefix` in
+`config.yaml`, `databases/` by default — so one bucket shared with other things
+can be given a folder of its own. Anything under the prefix that does not look
+like a backup artifact is never deleted by remote retention, and the prefix
+itself may not be empty: at the root of a bucket, retention would reach
+artifacts belonging to whatever else is stored there.
 
 ## Run
 
