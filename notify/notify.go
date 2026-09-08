@@ -32,9 +32,11 @@ const (
 // lose the entire alert.
 const maxBody = 1500
 
-// requestTimeout bounds one webhook call. Notification must never hold up a
-// backup run.
-const requestTimeout = 10 * time.Second
+// RequestTimeout bounds one webhook call. Notification must never hold up a
+// backup run. Callers sizing a budget across multiple calls (for example, one
+// event delivered to several senders) should derive it from this constant
+// rather than repeating the duration.
+const RequestTimeout = 10 * time.Second
 
 // Valid reports whether name is an event a user may subscribe to.
 func Valid(name string) bool {
@@ -112,7 +114,7 @@ func (s webhookSender) Send(ctx context.Context, msg Message) error {
 // environment. A channel is active exactly when its URL is set, matching how
 // ENCRYPT_KEY switches encryption on.
 func SendersFromEnv() []Sender {
-	client := &http.Client{Timeout: requestTimeout}
+	client := &http.Client{Timeout: RequestTimeout}
 	var senders []Sender
 	if url := os.Getenv("SLACK_WEBHOOK_URL"); url != "" {
 		senders = append(senders, newWebhookSender("slack", url, "text", client))

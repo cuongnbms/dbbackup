@@ -161,6 +161,42 @@ func TestNotifierWithNoSecretDoesNotRedactEverything(t *testing.T) {
 	}
 }
 
+func TestSendersFromEnv(t *testing.T) {
+	t.Run("neither set", func(t *testing.T) {
+		t.Setenv("SLACK_WEBHOOK_URL", "")
+		t.Setenv("DISCORD_WEBHOOK_URL", "")
+		senders := SendersFromEnv()
+		if len(senders) != 0 {
+			t.Fatalf("expected no senders, got %d: %+v", len(senders), senders)
+		}
+	})
+
+	t.Run("only slack set", func(t *testing.T) {
+		t.Setenv("SLACK_WEBHOOK_URL", "https://example.com/slack")
+		t.Setenv("DISCORD_WEBHOOK_URL", "")
+		senders := SendersFromEnv()
+		if len(senders) != 1 {
+			t.Fatalf("expected exactly one sender, got %d: %+v", len(senders), senders)
+		}
+		if senders[0].Name() != "slack" {
+			t.Fatalf("expected the slack sender, got %q", senders[0].Name())
+		}
+	})
+
+	t.Run("both set", func(t *testing.T) {
+		t.Setenv("SLACK_WEBHOOK_URL", "https://example.com/slack")
+		t.Setenv("DISCORD_WEBHOOK_URL", "https://example.com/discord")
+		senders := SendersFromEnv()
+		if len(senders) != 2 {
+			t.Fatalf("expected exactly two senders, got %d: %+v", len(senders), senders)
+		}
+		names := []string{senders[0].Name(), senders[1].Name()}
+		if names[0] != "slack" || names[1] != "discord" {
+			t.Fatalf("expected [slack discord], got %+v", names)
+		}
+	})
+}
+
 func TestSenderDoesNotLeakWebhookTokenInError(t *testing.T) {
 	const fakeToken = "xoxb_supersecrettoken_12345"
 	s := newWebhookSender("slack", "http://127.0.0.1:1/services/T00000000/B00000000/"+fakeToken, "text", &http.Client{Timeout: 1 * time.Second})

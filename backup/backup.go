@@ -56,7 +56,7 @@ type Report struct {
 	Artifact  string // path of the finished archive, "" if the run died first
 	Size      int64
 	Duration  time.Duration
-	Stage     string // connect|globals|dump|zip|encrypt|upload|cleanup|done
+	Stage     string // connect|prepare|globals|dump|zip|encrypt|upload|cleanup|done
 
 	// UploadErr is also returned as the fatal error; it lives here so the
 	// caller can tell an upload failure from a dump failure.
@@ -82,12 +82,12 @@ func PerformBackup(ctx context.Context, cfg *config.Config) (*Report, error) {
 	if err != nil {
 		return rep, err
 	}
+	rep.Stage = "prepare"
 	if len(databases) == 0 {
 		return rep, fmt.Errorf("no databases to back up after applying exclude_databases")
 	}
 	rep.Databases = databases
 
-	rep.Stage = "prepare"
 	if err := os.MkdirAll(cfg.BackupDir, 0o755); err != nil {
 		return rep, fmt.Errorf("create backup dir: %w", err)
 	}
@@ -151,6 +151,9 @@ func PerformBackup(ctx context.Context, cfg *config.Config) (*Report, error) {
 	if abs.Enable {
 		rep.Stage = "upload"
 		rep.UploadErr = UploadToABS(ctx, finalFile)
+		if rep.UploadErr != nil {
+			log.Printf("Warning: upload failed: %v", rep.UploadErr)
+		}
 		if rep.UploadErr == nil && abs.Keep > 0 {
 			if err := CleanupRemoteBackups(ctx, abs.Keep); err != nil {
 				log.Printf("Warning: remote cleanup failed: %v", err)

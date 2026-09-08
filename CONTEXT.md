@@ -14,8 +14,8 @@ archives. Either the scheduler or `--now` starts one.
 _Avoid_: job, task, execution
 
 **Stage**:
-A named step within a backup run: `globals`, `dump`, `zip`, `encrypt`, `upload`,
-`cleanup`, `done`. A run reports the stage it reached.
+A named step within a backup run: `connect`, `prepare`, `globals`, `dump`, `zip`,
+`encrypt`, `upload`, `cleanup`, `done`. A run reports the stage it reached.
 _Avoid_: step, phase
 
 **Dump**:

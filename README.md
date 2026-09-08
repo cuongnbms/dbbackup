@@ -29,8 +29,8 @@ remote_backup:
 ```
 
 `keep` counts archives, not days, but with the default daily cron the two are
-the same. It defaults to 14; raise it and disk use rises linearly, so size it
-against the archive size you actually observe. Remote retention
+the same. The shipped `config.yaml` sets it to 14; raise it and disk use rises
+linearly, so size it against the archive size you actually observe. Remote retention
 (`remote_backup.azure_blob_storage.keep`) is counted separately, and `0` there
 means unlimited.
 
@@ -66,6 +66,7 @@ docker exec -it dbbackup backup --now
 ```sh
 gpg --decrypt 20240101_000000.zip.gpg > 20240101_000000.zip   # if encrypted
 unzip 20240101_000000.zip -d 20240101_000000   # contains one DBNAME.backup per database
+psql -h HOST -U USER -d postgres -f 20240101_000000/globals.sql
 pg_restore -h HOST -U USER -d DBNAME --clean --if-exists 20240101_000000/DBNAME.backup
 ```
 

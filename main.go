@@ -47,7 +47,7 @@ func main() {
 			// hung channel must not starve the events behind it.
 			nctx, cancel := context.WithTimeout(
 				context.WithoutCancel(ctx),
-				time.Duration(len(senders)+1)*10*time.Second,
+				time.Duration(len(senders)+1)*notify.RequestTimeout,
 			)
 			notifier.Notify(nctx, messageFor(ev, rep, err))
 			cancel()
