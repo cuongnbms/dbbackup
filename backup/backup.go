@@ -48,96 +48,127 @@ func (c pgConn) url() string {
 	return u.String()
 }
 
-// PerformBackup dumps every non-excluded database, packs them into one
-// archive, optionally encrypts and uploads it, and only then prunes old
-// backups. Any failure aborts before older backups are touched.
-func PerformBackup(ctx context.Context, cfg *config.Config) error {
+// Report describes one backup run. PerformBackup returns one even when the run
+// fails, so a caller can always say what happened and how far it got.
+type Report struct {
+	Host      string // "host:port" of the server that was backed up
+	Databases []string
+	Artifact  string // path of the finished archive, "" if the run died first
+	Size      int64
+	Duration  time.Duration
+	Stage     string // connect|globals|dump|zip|encrypt|upload|cleanup|done
+
+	// UploadErr is also returned as the fatal error; it lives here so the
+	// caller can tell an upload failure from a dump failure.
+	UploadErr        error
+	RemoteCleanupErr error
+}
+
+// PerformBackup dumps the cluster globals and every non-excluded database,
+// packs them into one archive, optionally encrypts and uploads it, and only
+// then prunes old backups. Any failure aborts before older backups are touched.
+func PerformBackup(ctx context.Context, cfg *config.Config) (*Report, error) {
 	start := time.Now()
+	rep := &Report{Stage: "connect"}
+	defer func() { rep.Duration = time.Since(start) }()
 
 	conn, err := pgConnFromEnv()
 	if err != nil {
-		return err
+		return rep, err
 	}
+	rep.Host = conn.Host + ":" + conn.Port
 
 	databases, err := listDatabases(ctx, conn, cfg.ExcludeDatabases)
 	if err != nil {
-		return err
+		return rep, err
 	}
 	if len(databases) == 0 {
-		return fmt.Errorf("no databases to back up after applying exclude_databases")
+		return rep, fmt.Errorf("no databases to back up after applying exclude_databases")
 	}
+	rep.Databases = databases
 
 	if err := os.MkdirAll(cfg.BackupDir, 0o755); err != nil {
-		return fmt.Errorf("create backup dir: %w", err)
+		return rep, fmt.Errorf("create backup dir: %w", err)
 	}
 	release, err := acquireLock(cfg.BackupDir)
 	if err != nil {
-		return err
+		return rep, err
 	}
 	defer release()
 
 	stamp := time.Now().Format(timestampLayout)
 	workDir := filepath.Join(cfg.BackupDir, stamp)
 	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		return fmt.Errorf("create work dir: %w", err)
+		return rep, fmt.Errorf("create work dir: %w", err)
 	}
 	// The dump directory is always temporary: remove it on every exit path
 	// (the happy path removes it explicitly before cleanup runs).
 	defer os.RemoveAll(workDir)
 
+	rep.Stage = "globals"
 	if err := dumpGlobals(ctx, conn, workDir); err != nil {
-		return err
+		return rep, err
 	}
 
+	rep.Stage = "dump"
 	for _, dbname := range databases {
 		if err := dumpDatabase(ctx, conn, dbname, workDir, cfg.ExcludeTables[dbname]); err != nil {
-			return err
+			return rep, err
 		}
 	}
 
+	rep.Stage = "zip"
 	zipFile := workDir + ".zip"
 	if err := ZipFolder(workDir, zipFile); err != nil {
 		os.Remove(zipFile)
-		return fmt.Errorf("zip backup directory: %w", err)
+		return rep, fmt.Errorf("zip backup directory: %w", err)
 	}
 	if err := os.RemoveAll(workDir); err != nil {
-		return fmt.Errorf("remove dump directory: %w", err)
+		return rep, fmt.Errorf("remove dump directory: %w", err)
 	}
 
 	finalFile := zipFile
 	if key := os.Getenv("ENCRYPT_KEY"); key != "" {
+		rep.Stage = "encrypt"
 		log.Printf("Encrypting %s", zipFile)
 		if err := EncryptFile(zipFile, key); err != nil {
 			os.Remove(zipFile)
 			os.Remove(zipFile + ".gpg")
-			return err
+			return rep, err
 		}
 		finalFile = zipFile + ".gpg"
+	}
+	rep.Artifact = finalFile
+	if info, err := os.Stat(finalFile); err == nil {
+		rep.Size = info.Size()
 	}
 
 	// The local artifact is complete and verified at this point, so local
 	// retention runs even if the upload below fails; the upload error is
 	// still reported.
-	var uploadErr error
 	abs := cfg.RemoteBackup.AzureBlobStorage
 	if abs.Enable {
-		uploadErr = UploadToABS(ctx, finalFile)
-		if uploadErr == nil && abs.Keep > 0 {
+		rep.Stage = "upload"
+		rep.UploadErr = UploadToABS(ctx, finalFile)
+		if rep.UploadErr == nil && abs.Keep > 0 {
 			if err := CleanupRemoteBackups(ctx, abs.Keep); err != nil {
 				log.Printf("Warning: remote cleanup failed: %v", err)
+				rep.RemoteCleanupErr = err
 			}
 		}
 	}
 
+	rep.Stage = "cleanup"
 	if err := CleanupOldBackups(cfg.BackupDir, cfg.Keep); err != nil {
-		return err
+		return rep, err
 	}
-	if uploadErr != nil {
-		return uploadErr
+	if rep.UploadErr != nil {
+		return rep, rep.UploadErr
 	}
 
+	rep.Stage = "done"
 	log.Printf("Backup completed in %s: %s", time.Since(start).Round(time.Millisecond), finalFile)
-	return nil
+	return rep, nil
 }
 
 func listDatabases(ctx context.Context, conn pgConn, excludeList []string) ([]string, error) {

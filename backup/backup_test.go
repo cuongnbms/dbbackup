@@ -1,8 +1,11 @@
 package backup
 
 import (
+	"context"
 	"reflect"
 	"testing"
+
+	"dbbackup/config"
 )
 
 func TestIsExcluded(t *testing.T) {
@@ -50,5 +53,28 @@ func TestPgConnFromEnvMissing(t *testing.T) {
 	t.Setenv("PG_SSLMODE", "disable")
 	if _, err := pgConnFromEnv(); err == nil {
 		t.Fatal("expected error for missing PG_HOST")
+	}
+}
+
+func TestPerformBackupAlwaysReturnsAReport(t *testing.T) {
+	// A missing PG_HOST fails at the very first step, which is the earliest
+	// possible return and therefore the strictest check that the report is
+	// never nil.
+	t.Setenv("PG_HOST", "")
+	t.Setenv("PG_PORT", "5432")
+	t.Setenv("PG_USER", "u")
+	t.Setenv("PG_PASSWORD", "p")
+	t.Setenv("PG_SSLMODE", "disable")
+
+	cfg := &config.Config{BackupDir: t.TempDir(), Keep: 1, Cron: "@daily"}
+	rep, err := PerformBackup(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("expected an error when PG_HOST is unset")
+	}
+	if rep == nil {
+		t.Fatal("PerformBackup must never return a nil report")
+	}
+	if rep.Duration <= 0 {
+		t.Fatal("the report should carry how long the run took")
 	}
 }

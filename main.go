@@ -29,7 +29,7 @@ func main() {
 
 	if *runNow {
 		log.Println("Running backup immediately...")
-		if err := backup.PerformBackup(ctx, cfg); err != nil {
+		if _, err := backup.PerformBackup(ctx, cfg); err != nil {
 			log.Printf("Backup failed: %v", err)
 			os.Exit(1)
 		}
@@ -41,7 +41,7 @@ func main() {
 		cron.Recover(cron.DefaultLogger),
 	))
 	_, err = c.AddFunc(cfg.Cron, func() {
-		if err := backup.PerformBackup(ctx, cfg); err != nil {
+		if _, err := backup.PerformBackup(ctx, cfg); err != nil {
 			log.Printf("Backup failed: %v", err)
 		}
 	})
