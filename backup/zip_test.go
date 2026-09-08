@@ -2,6 +2,8 @@ package backup
 
 import (
 	"archive/zip"
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,11 +65,30 @@ func TestZipFolderStoresDumpsAndDeflatesText(t *testing.T) {
 	for _, f := range r.File {
 		methods[f.Name] = f.Method
 	}
-	if methods["demo.backup"] != zip.Store {
-		t.Fatalf("demo.backup should be stored, got method %d", methods["demo.backup"])
+	if m, ok := methods["demo.backup"]; !ok || m != zip.Store {
+		t.Fatalf("demo.backup should be stored, got method %d", m)
 	}
 	if methods["globals.sql"] != zip.Deflate {
 		t.Fatalf("globals.sql should be deflated, got method %d", methods["globals.sql"])
+	}
+
+	// Verify round-trip: read back the stored entry and confirm it matches the original bytes.
+	for _, f := range r.File {
+		if f.Name == "demo.backup" {
+			rc, err := f.Open()
+			if err != nil {
+				t.Fatalf("failed to open demo.backup entry: %v", err)
+			}
+			defer rc.Close()
+			read, err := io.ReadAll(rc)
+			if err != nil {
+				t.Fatalf("failed to read demo.backup entry: %v", err)
+			}
+			if !bytes.Equal(read, blob) {
+				t.Fatalf("demo.backup content mismatch: got %d bytes, want %d bytes", len(read), len(blob))
+			}
+			break
+		}
 	}
 }
 
