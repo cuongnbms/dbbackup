@@ -73,6 +73,21 @@ user cannot read `pg_authid` the dump falls back to `--no-role-passwords`
 automatically and logs a warning; restored roles then need their passwords set
 by hand.
 
+## Notifications
+
+Set `SLACK_WEBHOOK_URL`, `DISCORD_WEBHOOK_URL`, or both, and list the events you
+care about under `notify.events` in `config.yaml`:
+
+| Event | Fires when |
+|---|---|
+| `backup_failed` | The run failed before producing a complete archive, or local cleanup failed |
+| `upload_failed` | The archive is fine locally but the upload failed |
+| `remote_cleanup_failed` | The upload worked but pruning old blobs failed |
+| `backup_succeeded` | The run completed |
+
+A misspelled event name fails at startup. Delivery never fails a backup: a
+webhook error is logged and the run's own result is unaffected.
+
 ## Development
 
 ```sh
