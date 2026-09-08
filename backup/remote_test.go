@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"dbbackup/config"
 )
@@ -16,12 +17,28 @@ type fakeTarget struct {
 	cleanupErr  error
 	uploaded    []string
 	cleanupKeep []int
+
+	// budgets records the time left on the context of each Upload call, 0 when
+	// it carried no deadline. blockUntilDone makes Upload wait for that
+	// context instead of returning, standing in for a destination that never
+	// finishes.
+	budgets        []time.Duration
+	blockUntilDone bool
 }
 
 func (f *fakeTarget) Name() string { return f.name }
 
-func (f *fakeTarget) Upload(_ context.Context, filePath string) error {
+func (f *fakeTarget) Upload(ctx context.Context, filePath string) error {
 	f.uploaded = append(f.uploaded, filePath)
+	var budget time.Duration
+	if deadline, ok := ctx.Deadline(); ok {
+		budget = time.Until(deadline)
+	}
+	f.budgets = append(f.budgets, budget)
+	if f.blockUntilDone {
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	return f.uploadErr
 }
 
@@ -35,7 +52,7 @@ func TestShipToRemotesUploadsAndPrunesEveryDestination(t *testing.T) {
 	b := &fakeTarget{name: "B"}
 	dests := []remoteDestination{{target: a, keep: 3}, {target: b, keep: 7}}
 
-	uploadErr, cleanupErr := shipToRemotes(context.Background(), dests, "/backup/x.zip")
+	uploadErr, cleanupErr := shipToRemotes(context.Background(), dests, "/backup/x.zip", 0)
 
 	if uploadErr != nil || cleanupErr != nil {
 		t.Fatalf("expected no errors, got upload=%v cleanup=%v", uploadErr, cleanupErr)
@@ -57,7 +74,7 @@ func TestShipToRemotesDoesNotPruneAfterAFailedUpload(t *testing.T) {
 	a := &fakeTarget{name: "A", uploadErr: errors.New("bucket rejected")}
 	dests := []remoteDestination{{target: a, keep: 3}}
 
-	uploadErr, cleanupErr := shipToRemotes(context.Background(), dests, "/backup/x.zip")
+	uploadErr, cleanupErr := shipToRemotes(context.Background(), dests, "/backup/x.zip", 0)
 
 	if uploadErr == nil {
 		t.Fatal("expected the upload error to be reported")
@@ -76,7 +93,7 @@ func TestShipToRemotesKeepsGoingAfterOneDestinationFails(t *testing.T) {
 	b := &fakeTarget{name: "B"}
 	dests := []remoteDestination{{target: a, keep: 3}, {target: b, keep: 3}}
 
-	uploadErr, _ := shipToRemotes(context.Background(), dests, "/backup/x.zip")
+	uploadErr, _ := shipToRemotes(context.Background(), dests, "/backup/x.zip", 0)
 
 	if uploadErr == nil {
 		t.Fatal("expected A's failure to be reported")
@@ -99,7 +116,7 @@ func TestShipToRemotesJoinsErrorsFromEveryDestination(t *testing.T) {
 		{target: &fakeTarget{name: "B", uploadErr: bErr}, keep: 3},
 	}
 
-	uploadErr, _ := shipToRemotes(context.Background(), dests, "/backup/x.zip")
+	uploadErr, _ := shipToRemotes(context.Background(), dests, "/backup/x.zip", 0)
 
 	if !errors.Is(uploadErr, aErr) || !errors.Is(uploadErr, bErr) {
 		t.Fatalf("both causes must survive the join: %v", uploadErr)
@@ -115,7 +132,7 @@ func TestShipToRemotesReportsCleanupFailureSeparately(t *testing.T) {
 	cleanErr := errors.New("list failed")
 	dests := []remoteDestination{{target: &fakeTarget{name: "A", cleanupErr: cleanErr}, keep: 3}}
 
-	uploadErr, cleanupErr := shipToRemotes(context.Background(), dests, "/backup/x.zip")
+	uploadErr, cleanupErr := shipToRemotes(context.Background(), dests, "/backup/x.zip", 0)
 
 	if uploadErr != nil {
 		t.Fatalf("the upload succeeded: %v", uploadErr)
@@ -131,7 +148,7 @@ func TestShipToRemotesSkipsPruneWhenKeepIsUnlimited(t *testing.T) {
 	a := &fakeTarget{name: "A"}
 	dests := []remoteDestination{{target: a, keep: 0}}
 
-	if _, cleanupErr := shipToRemotes(context.Background(), dests, "/backup/x.zip"); cleanupErr != nil {
+	if _, cleanupErr := shipToRemotes(context.Background(), dests, "/backup/x.zip", 0); cleanupErr != nil {
 		t.Fatal(cleanupErr)
 	}
 	if len(a.cleanupKeep) != 0 {
@@ -208,5 +225,89 @@ func TestRemoteDestinationsReportsABrokenTargetWithoutDroppingTheOthers(t *testi
 	}
 	if len(dests) != 1 {
 		t.Fatalf("the Azure destination should have survived, got %+v", dests)
+	}
+}
+
+func TestUploadDeadlineScalesWithTheArtifactSize(t *testing.T) {
+	// 10 MiB at 1024 KiB/s is 10 seconds of transfer, but the floor is what
+	// a small artifact actually gets, so use a size large enough to clear it.
+	got := uploadDeadline(600*1024*1024, 1024)
+	if want := 600 * time.Second; got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}
+
+// A tiny artifact would otherwise get a deadline of a few seconds, which the
+// TLS handshake and the multipart create call alone can exceed.
+func TestUploadDeadlineHasAFloorForSmallArtifacts(t *testing.T) {
+	if got := uploadDeadline(1024, 1024); got != uploadDeadlineFloor {
+		t.Fatalf("got %s, want the floor %s", got, uploadDeadlineFloor)
+	}
+}
+
+func TestUploadDeadlineIsDisabledWhenNoMinimumSpeedIsSet(t *testing.T) {
+	if got := uploadDeadline(600*1024*1024, 0); got != 0 {
+		t.Fatalf("0 KiB/s means no deadline, got %s", got)
+	}
+}
+
+// The budget is per destination: a slow S3 must not eat the time Azure needs.
+func TestShipToRemotesGivesEachDestinationItsOwnDeadline(t *testing.T) {
+	slow := &fakeTarget{name: "slow", blockUntilDone: true}
+	fast := &fakeTarget{name: "fast"}
+	dests := []remoteDestination{{target: slow, keep: 3}, {target: fast, keep: 3}}
+
+	shipToRemotes(context.Background(), dests, "/backup/x.zip", 80*time.Millisecond)
+
+	if len(fast.budgets) != 1 {
+		t.Fatalf("fast destination was not called: %v", fast.budgets)
+	}
+	if fast.budgets[0] < 40*time.Millisecond {
+		t.Fatalf("fast destination inherited the slow one's spent budget: %s", fast.budgets[0])
+	}
+}
+
+// "context deadline exceeded" on its own tells the operator nothing about why.
+func TestShipToRemotesExplainsAnExpiredUploadDeadline(t *testing.T) {
+	slow := &fakeTarget{name: "slow", blockUntilDone: true}
+	dests := []remoteDestination{{target: slow, keep: 3}}
+
+	uploadErr, _ := shipToRemotes(context.Background(), dests, "/backup/x.zip", 20*time.Millisecond)
+
+	if uploadErr == nil {
+		t.Fatal("expected the expired deadline to be reported")
+	}
+	for _, want := range []string{"slow", "timed out", "20ms"} {
+		if !strings.Contains(uploadErr.Error(), want) {
+			t.Fatalf("error should mention %q: %v", want, uploadErr)
+		}
+	}
+}
+
+// A run killed by SIGTERM is a cancellation, not a destination that was too
+// slow, and must not be reported as one.
+func TestShipToRemotesDoesNotBlameTheDeadlineWhenTheRunIsCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	dests := []remoteDestination{{target: &fakeTarget{name: "A", blockUntilDone: true}, keep: 3}}
+
+	uploadErr, _ := shipToRemotes(ctx, dests, "/backup/x.zip", time.Hour)
+
+	if uploadErr == nil {
+		t.Fatal("expected the cancellation to be reported")
+	}
+	if strings.Contains(uploadErr.Error(), "timed out") {
+		t.Fatalf("a cancelled run is not a slow destination: %v", uploadErr)
+	}
+}
+
+func TestShipToRemotesLeavesTheContextAloneWithoutADeadline(t *testing.T) {
+	a := &fakeTarget{name: "A"}
+	dests := []remoteDestination{{target: a, keep: 3}}
+
+	shipToRemotes(context.Background(), dests, "/backup/x.zip", 0)
+
+	if len(a.budgets) != 1 || a.budgets[0] != 0 {
+		t.Fatalf("expected an undeadlined context, got %v", a.budgets)
 	}
 }

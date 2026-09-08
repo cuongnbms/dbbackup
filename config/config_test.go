@@ -125,3 +125,22 @@ func TestReadConfigRejectsMalformedDatabasePattern(t *testing.T) {
 		t.Fatal("expected an error for a malformed exclude_databases pattern")
 	}
 }
+
+func TestReadConfigParsesMinUploadSpeed(t *testing.T) {
+	cfg, err := ReadConfig(write(t, "keep: 2\ncron: '0 0 * * *'\nremote_backup:\n  min_upload_speed_kbps: 512\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RemoteBackup.MinUploadSpeedKBps != 512 {
+		t.Fatalf("got %d", cfg.RemoteBackup.MinUploadSpeedKBps)
+	}
+}
+
+// A negative rate would yield a negative deadline, which cancels every upload
+// before it starts. 0 is the way to switch the deadline off.
+func TestReadConfigRejectsNegativeMinUploadSpeed(t *testing.T) {
+	_, err := ReadConfig(write(t, "keep: 2\ncron: '0 0 * * *'\nremote_backup:\n  min_upload_speed_kbps: -1\n"))
+	if err == nil || !strings.Contains(err.Error(), "min_upload_speed_kbps") {
+		t.Fatalf("expected an error naming min_upload_speed_kbps, got %v", err)
+	}
+}

@@ -23,6 +23,11 @@ type RemoteTarget struct {
 type RemoteBackup struct {
 	AzureBlobStorage RemoteTarget `yaml:"azure_blob_storage"`
 	AWSS3            RemoteTarget `yaml:"aws_s3"`
+	// MinUploadSpeedKBps is the slowest upload rate still worth waiting for,
+	// in KiB/s. Each destination gets the artifact size divided by this rate
+	// to finish in, floored at a few minutes. 0 means no deadline: an upload
+	// then runs until it finishes or the process is stopped.
+	MinUploadSpeedKBps int `yaml:"min_upload_speed_kbps"`
 }
 
 // Notify selects which backup events produce a notification. An empty Events
@@ -102,6 +107,11 @@ func (c *Config) validate() error {
 	}
 	if c.RemoteBackup.AWSS3.Keep < 0 {
 		return fmt.Errorf("remote_backup.aws_s3.keep must be >= 0")
+	}
+	// A negative rate yields a negative deadline, which cancels every upload
+	// before it starts. 0 is how the deadline is switched off.
+	if c.RemoteBackup.MinUploadSpeedKBps < 0 {
+		return fmt.Errorf("remote_backup.min_upload_speed_kbps must be >= 0 (0 disables the upload deadline)")
 	}
 	for _, e := range c.Notify.Events {
 		if !notify.Valid(e) {

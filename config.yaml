@@ -18,6 +18,12 @@ remote_backup:
   aws_s3:
     enable: false
     keep: 0
+  # Slowest upload rate still worth waiting for, in KiB/s. Each destination gets
+  # the artifact size divided by this rate to finish in, never less than 5
+  # minutes. Neither cloud SDK caps a request on its own, so without this a
+  # wedged connection hangs the run and cron then silently skips every following
+  # one. 0 disables the deadline.
+  min_upload_speed_kbps: 1024
 
 # Databases never dumped. Each entry is a glob pattern matched against the
 # database name; a pattern without a metacharacter matches exactly. Template

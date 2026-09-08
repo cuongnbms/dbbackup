@@ -155,7 +155,8 @@ func PerformBackup(ctx context.Context, cfg *config.Config) (*Report, error) {
 		// received the artifact, so its error is an upload error like any
 		// other, and the destinations that did build still get their copy.
 		dests, buildErr := remoteDestinations(rb)
-		uploadErr, cleanupErr := shipToRemotes(ctx, dests, finalFile)
+		uploadErr, cleanupErr := shipToRemotes(ctx, dests, finalFile,
+			uploadDeadline(rep.Size, rb.MinUploadSpeedKBps))
 		rep.UploadErr = errors.Join(buildErr, uploadErr)
 		rep.RemoteCleanupErr = cleanupErr
 	}

@@ -23,6 +23,9 @@ remote_backup:
   aws_s3:
     enable: false
     keep: 0
+  # per-destination upload deadline = artifact size / this rate, min 5 minutes.
+  # 0 = no deadline (a wedged connection then hangs the run).
+  min_upload_speed_kbps: 1024
 
 # exclude_databases:
 #   - postgres

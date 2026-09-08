@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"dbbackup/config"
 )
@@ -42,8 +43,59 @@ type remoteDestination struct {
 	keep   int
 }
 
+// uploadDeadlineFloor is the least time any destination gets, however small the
+// artifact. Even a few hundred kilobytes costs a DNS lookup, a TLS handshake
+// and a multipart create before the first byte of payload moves, so a deadline
+// derived purely from the size would fail a healthy upload.
+const uploadDeadlineFloor = 5 * time.Minute
+
+// uploadDeadline returns how long one destination gets to accept an artifact of
+// size bytes, given the slowest transfer rate still worth waiting for in KiB/s.
+// A rate of 0 returns 0, meaning no deadline at all.
+//
+// Deriving the budget from the size rather than fixing it means a cluster that
+// grows does not silently walk into a deadline that was generous when it was
+// set: the artifact and its budget grow together.
+func uploadDeadline(size int64, minKBps int) time.Duration {
+	if minKBps <= 0 {
+		return 0
+	}
+	d := time.Duration(float64(size) / float64(int64(minKBps)*1024) * float64(time.Second))
+	if d < uploadDeadlineFloor {
+		return uploadDeadlineFloor
+	}
+	return d
+}
+
+// uploadWithin gives one destination its own slice of time. The budget is per
+// destination and not shared: a stalled S3 must not spend the time Azure needs,
+// for the same reason a failed S3 does not stop the Azure upload.
+//
+// An expired budget is reported as a timeout. Neither SDK caps a request on its
+// own -- the AWS transport sets no response-header or client timeout, and
+// azcore leaves TryTimeout at 0 -- so without this the run hangs on a wedged
+// connection until TCP keepalive gives up, and cron then skips every following
+// run with nothing but a log line to say why.
+func uploadWithin(ctx context.Context, target remoteTarget, filePath string, deadline time.Duration) error {
+	if deadline <= 0 {
+		return target.Upload(ctx, filePath)
+	}
+	uctx, cancel := context.WithTimeout(ctx, deadline)
+	defer cancel()
+
+	err := target.Upload(uctx, filePath)
+	// A run killed by SIGTERM arrives here with the same error class as a
+	// destination that ran out of budget, and is not one: only the derived
+	// context expiring while the run itself is still alive is a timeout.
+	if err != nil && ctx.Err() == nil && uctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("timed out after %s: %w", deadline, err)
+	}
+	return err
+}
+
 // shipToRemotes uploads filePath to every destination, then prunes the ones
-// that accepted it.
+// that accepted it. Each upload gets deadline to finish in; 0 means it gets as
+// long as the run itself.
 //
 // A destination that fails never stops the others: the whole point of a second
 // destination is that it survives the first one being down. A destination whose
@@ -54,11 +106,11 @@ type remoteDestination struct {
 // other, because they mean different things to the operator: a failed upload
 // means the offsite copy does not exist, a failed prune means it does but old
 // ones are piling up.
-func shipToRemotes(ctx context.Context, dests []remoteDestination, filePath string) (uploadErr, cleanupErr error) {
+func shipToRemotes(ctx context.Context, dests []remoteDestination, filePath string, deadline time.Duration) (uploadErr, cleanupErr error) {
 	var uploadErrs, cleanupErrs []error
 	for _, dest := range dests {
 		name := dest.target.Name()
-		if err := dest.target.Upload(ctx, filePath); err != nil {
+		if err := uploadWithin(ctx, dest.target, filePath, deadline); err != nil {
 			log.Printf("Warning: upload to %s failed: %v", name, err)
 			uploadErrs = append(uploadErrs, fmt.Errorf("%s: %w", name, err))
 			continue
