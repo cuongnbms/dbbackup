@@ -110,3 +110,20 @@ needs `pg_restore` 17 or newer to read; restore with the client from this image
 (or any 17+ client), whatever major version the target server is. Restoring into a
 server older than 17 logs one ignorable `transaction_timeout` error, so avoid
 `-1` / `--exit-on-error` there.
+
+## Release
+
+Images are published to [`cuongnb14/db-backup`](https://hub.docker.com/r/cuongnb14/db-backup)
+on Docker Hub, for `linux/amd64` and `linux/arm64`.
+
+Publishing a GitHub release with tag `vX.Y` builds and pushes
+`cuongnb14/db-backup:X.Y`. A full release also moves `:latest`; a prerelease
+does not, so `:latest` always points at a real release. `.github/workflows/release.yml`
+also accepts a manual run (`workflow_dispatch`) taking a tag — useful for
+rebuilding one version, and it never touches `:latest`.
+
+The workflow needs two repository secrets: `DOCKERHUB_USERNAME` and
+`DOCKERHUB_TOKEN` (a Docker Hub access token, not the account password).
+
+The version in `Makefile` and in `docker-compose.yml` is not updated by the
+release; bump it by hand in the commit you tag.
