@@ -39,12 +39,18 @@ func main() {
 
 	run := func() error {
 		rep, err := backup.PerformBackup(ctx, cfg)
-		// A run aborted by SIGTERM leaves ctx cancelled, which would kill the
-		// webhook call too — and that run is exactly the one worth reporting.
-		nctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
-		defer cancel()
 		for _, ev := range eventsFor(rep, err) {
+			// A run aborted by SIGTERM leaves ctx cancelled, which would kill
+			// the webhook call too — and that run is exactly the one worth
+			// reporting. The budget is per event and scales with the number of
+			// senders, because Notify posts to them one after another: a single
+			// hung channel must not starve the events behind it.
+			nctx, cancel := context.WithTimeout(
+				context.WithoutCancel(ctx),
+				time.Duration(len(senders)+1)*10*time.Second,
+			)
 			notifier.Notify(nctx, messageFor(ev, rep, err))
+			cancel()
 		}
 		return err
 	}
@@ -87,17 +93,23 @@ func main() {
 // error: PerformBackup runs local cleanup after a failed upload, and if that
 // cleanup fails it returns the cleanup error with UploadErr still set. Then the
 // run is a plain backup_failed, so the fatal error is the one reported.
+//
+// remote_cleanup_failed is independent of how the run ended: pruning old blobs
+// can fail and the run can then still die in local cleanup. It is appended
+// outside the switch so that failure is reported whenever it happened.
 func eventsFor(rep *backup.Report, err error) []notify.Event {
 	if rep == nil {
 		return []notify.Event{notify.BackupFailed}
 	}
+	var events []notify.Event
 	switch {
 	case rep.UploadErr != nil && errors.Is(err, rep.UploadErr):
-		return []notify.Event{notify.UploadFailed}
+		events = append(events, notify.UploadFailed)
 	case err != nil:
-		return []notify.Event{notify.BackupFailed}
+		events = append(events, notify.BackupFailed)
+	default:
+		events = append(events, notify.BackupSucceeded)
 	}
-	events := []notify.Event{notify.BackupSucceeded}
 	if rep.RemoteCleanupErr != nil {
 		events = append(events, notify.RemoteCleanupFailed)
 	}

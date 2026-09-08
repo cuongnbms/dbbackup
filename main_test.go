@@ -58,6 +58,21 @@ func TestEventsForSuccessWithFailedRemoteCleanup(t *testing.T) {
 	}
 }
 
+// TestEventsForFailureWithFailedRemoteCleanup covers a remote prune that failed
+// before the run went on to die in local cleanup. remote_cleanup_failed is
+// about the blobs, not about how the run ended, so it must still be reported
+// alongside the fatal failure.
+func TestEventsForFailureWithFailedRemoteCleanup(t *testing.T) {
+	rep := &backup.Report{
+		Stage:            "cleanup",
+		RemoteCleanupErr: errors.New("list failed"),
+	}
+	got := eventsFor(rep, errors.New("remove old backup: permission denied"))
+	if len(got) != 2 || got[0] != notify.BackupFailed || got[1] != notify.RemoteCleanupFailed {
+		t.Fatalf("expected backup_failed plus remote_cleanup_failed, got %v", got)
+	}
+}
+
 func TestEventsForNilReport(t *testing.T) {
 	got := eventsFor(nil, errors.New("boom"))
 	if len(got) != 1 || got[0] != notify.BackupFailed {
@@ -76,6 +91,11 @@ func TestMessageForFailureNamesTheStage(t *testing.T) {
 	}
 	if !strings.Contains(msg.Body, "disk full") {
 		t.Fatalf("body should carry the error: %q", msg.Body)
+	}
+	// notify.Notifier redacts and truncates Body but never Title, so error
+	// text must never reach the Title.
+	if strings.Contains(msg.Title, "disk full") {
+		t.Fatalf("error text must stay out of the unredacted title: %q", msg.Title)
 	}
 }
 
