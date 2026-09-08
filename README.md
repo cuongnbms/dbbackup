@@ -12,7 +12,7 @@ run never removes an older good backup.
 `config.yaml` (mounted at `/app/config.yaml`):
 
 ```yaml
-keep: 2              # newest local backups to keep, must be >= 1
+keep: 14             # newest local backups to keep, must be >= 1
 cron: 0 0 * * *      # 5-field cron
 # backup_dir: /backup
 
@@ -27,6 +27,12 @@ remote_backup:
 #   demo:
 #     - users
 ```
+
+`keep` counts archives, not days, but with the default daily cron the two are
+the same. It defaults to 14; raise it and disk use rises linearly, so size it
+against the archive size you actually observe. Remote retention
+(`remote_backup.azure_blob_storage.keep`) is counted separately, and `0` there
+means unlimited.
 
 Environment variables (see `.env.example`):
 

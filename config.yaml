@@ -1,5 +1,6 @@
-# Number of newest local backups to keep (must be >= 1).
-keep: 2
+# Number of newest local backups to keep (must be >= 1). With a daily cron this
+# is how many days of history you can restore from.
+keep: 14
 
 # Schedule in standard 5-field cron syntax.
 cron: 0 0 * * *

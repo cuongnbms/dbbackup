@@ -63,3 +63,15 @@ func TestReadConfigAllowsNoNotifyBlock(t *testing.T) {
 		t.Fatalf("expected notification to be off by default, got %q", cfg.Notify.Events)
 	}
 }
+
+// The shipped config.yaml is copied into the image, so a mistake in it breaks
+// every container that does not mount its own.
+func TestShippedConfigIsValid(t *testing.T) {
+	cfg, err := ReadConfig(filepath.Join("..", "config.yaml"))
+	if err != nil {
+		t.Fatalf("shipped config.yaml is invalid: %v", err)
+	}
+	if cfg.Keep < 7 {
+		t.Fatalf("shipped keep is %d; a daily cron needs at least a week of history", cfg.Keep)
+	}
+}
