@@ -75,3 +75,21 @@ func TestShippedConfigIsValid(t *testing.T) {
 		t.Fatalf("shipped keep is %d; a daily cron needs at least a week of history", cfg.Keep)
 	}
 }
+
+func TestReadConfigParsesAWSS3(t *testing.T) {
+	cfg, err := ReadConfig(write(t, "keep: 2\ncron: '0 0 * * *'\nremote_backup:\n  aws_s3:\n    enable: true\n    keep: 5\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s3 := cfg.RemoteBackup.AWSS3
+	if !s3.Enable || s3.Keep != 5 {
+		t.Fatalf("unexpected aws_s3 config: %+v", s3)
+	}
+}
+
+func TestReadConfigRejectsNegativeAWSS3Keep(t *testing.T) {
+	_, err := ReadConfig(write(t, "keep: 2\ncron: '0 0 * * *'\nremote_backup:\n  aws_s3:\n    keep: -1\n"))
+	if err == nil {
+		t.Fatal("expected an error for a negative aws_s3.keep")
+	}
+}

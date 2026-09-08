@@ -5,15 +5,10 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path"
-	"path/filepath"
-	"sort"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/container"
 )
-
-const blobPrefix = "databases/"
 
 type absTarget struct {
 	client    *azblob.Client
@@ -40,60 +35,28 @@ func absFromEnv() (*absTarget, error) {
 	return &absTarget{client: client, container: containerName}, nil
 }
 
-func blobName(filePath string) string {
-	return blobPrefix + filepath.Base(filePath)
-}
+func (t *absTarget) Name() string { return "Azure Blob Storage" }
 
-// UploadToABS streams filePath to Azure Blob Storage under databases/<basename>.
-func UploadToABS(ctx context.Context, filePath string) error {
-	target, err := absFromEnv()
-	if err != nil {
-		return err
-	}
-
+// Upload streams filePath to Azure Blob Storage under databases/<basename>.
+func (t *absTarget) Upload(ctx context.Context, filePath string) error {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("open backup file: %w", err)
 	}
 	defer file.Close()
 
-	name := blobName(filePath)
-	if _, err := target.client.UploadFile(ctx, target.container, name, file, nil); err != nil {
-		return fmt.Errorf("upload %s to Azure Blob Storage: %w", name, err)
+	name := remoteKey(filePath)
+	if _, err := t.client.UploadFile(ctx, t.container, name, file, nil); err != nil {
+		return fmt.Errorf("upload %s: %w", name, err)
 	}
 	log.Printf("File uploaded to Azure Blob Storage: %s", name)
 	return nil
 }
 
-// blobsToDelete returns the backup blobs that fall outside the keepCount
-// newest. Blobs not named like a backup archive are never returned.
-// keepCount <= 0 means keep everything.
-func blobsToDelete(names []string, keepCount int) []string {
-	if keepCount <= 0 {
-		return nil
-	}
-	var archives []string
-	for _, name := range names {
-		if backupFileRe.MatchString(path.Base(name)) {
-			archives = append(archives, name)
-		}
-	}
-	if len(archives) <= keepCount {
-		return nil
-	}
-	sort.Sort(sort.Reverse(sort.StringSlice(archives)))
-	return archives[keepCount:]
-}
-
-// CleanupRemoteBackups keeps the keepCount newest blobs under databases/.
-func CleanupRemoteBackups(ctx context.Context, keepCount int) error {
-	target, err := absFromEnv()
-	if err != nil {
-		return err
-	}
-
+// Cleanup keeps the keepCount newest blobs under databases/.
+func (t *absTarget) Cleanup(ctx context.Context, keepCount int) error {
 	var names []string
-	pager := target.client.NewListBlobsFlatPager(target.container, &container.ListBlobsFlatOptions{Prefix: to(blobPrefix)})
+	pager := t.client.NewListBlobsFlatPager(t.container, &container.ListBlobsFlatOptions{Prefix: to(remotePrefix)})
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
@@ -106,9 +69,9 @@ func CleanupRemoteBackups(ctx context.Context, keepCount int) error {
 		}
 	}
 
-	for _, name := range blobsToDelete(names, keepCount) {
+	for _, name := range archivesToDelete(names, keepCount) {
 		log.Printf("Deleting old remote backup: %s", name)
-		if _, err := target.client.DeleteBlob(ctx, target.container, name, nil); err != nil {
+		if _, err := t.client.DeleteBlob(ctx, t.container, name, nil); err != nil {
 			return fmt.Errorf("delete remote backup %s: %w", name, err)
 		}
 	}

@@ -3,6 +3,7 @@ package backup
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -147,19 +148,15 @@ func PerformBackup(ctx context.Context, cfg *config.Config) (*Report, error) {
 	// The local artifact is complete and verified at this point, so local
 	// retention runs even if the upload below fails; the upload error is
 	// still reported.
-	abs := cfg.RemoteBackup.AzureBlobStorage
-	if abs.Enable {
+	if rb := cfg.RemoteBackup; rb.AzureBlobStorage.Enable || rb.AWSS3.Enable {
 		rep.Stage = "upload"
-		rep.UploadErr = UploadToABS(ctx, finalFile)
-		if rep.UploadErr != nil {
-			log.Printf("Warning: upload failed: %v", rep.UploadErr)
-		}
-		if rep.UploadErr == nil && abs.Keep > 0 {
-			if err := CleanupRemoteBackups(ctx, abs.Keep); err != nil {
-				log.Printf("Warning: remote cleanup failed: %v", err)
-				rep.RemoteCleanupErr = err
-			}
-		}
+		// A destination that cannot even be built (missing credentials) never
+		// received the artifact, so its error is an upload error like any
+		// other, and the destinations that did build still get their copy.
+		dests, buildErr := remoteDestinations(rb)
+		uploadErr, cleanupErr := shipToRemotes(ctx, dests, finalFile)
+		rep.UploadErr = errors.Join(buildErr, uploadErr)
+		rep.RemoteCleanupErr = cleanupErr
 	}
 
 	rep.Stage = "cleanup"

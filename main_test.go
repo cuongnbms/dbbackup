@@ -128,3 +128,42 @@ func TestHumanSize(t *testing.T) {
 		}
 	}
 }
+
+// With two remote destinations enabled, PerformBackup joins their failures
+// into one error and returns that same value. eventsFor tells an upload
+// failure apart with errors.Is, which must still match the joined error —
+// otherwise a run where both destinations failed reports backup_failed and
+// the operator is told the local artifact is gone when it is fine.
+func TestEventsForJoinedUploadFailure(t *testing.T) {
+	joined := errors.Join(
+		errors.New("Azure Blob Storage: container missing"),
+		errors.New("AWS S3: access denied"),
+	)
+	rep := &backup.Report{Stage: "upload", UploadErr: joined}
+
+	got := eventsFor(rep, joined)
+
+	if len(got) != 1 || got[0] != notify.UploadFailed {
+		t.Fatalf("a joined upload failure must report upload_failed, got %v", got)
+	}
+}
+
+// Both destinations failing produces a multi-line error. The notification body
+// has to carry each destination's reason, because "upload failed" alone does
+// not say whether one copy survived.
+func TestMessageForUploadFailureNamesEveryDestination(t *testing.T) {
+	rep := &backup.Report{
+		Host:     "db:5432",
+		Artifact: "/backup/20260908_000000.zip.gpg",
+		UploadErr: errors.Join(
+			errors.New("Azure Blob Storage: container missing"),
+			errors.New("AWS S3: access denied"),
+		),
+	}
+	msg := messageFor(notify.UploadFailed, rep, rep.UploadErr)
+	for _, want := range []string{"Azure Blob Storage", "container missing", "AWS S3", "access denied"} {
+		if !strings.Contains(msg.Body, want) {
+			t.Fatalf("body is missing %q: %q", want, msg.Body)
+		}
+	}
+}

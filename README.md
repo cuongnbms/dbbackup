@@ -2,7 +2,7 @@
 
 Scheduled PostgreSQL backups: `pg_dump` every database, verify each dump with
 `pg_restore --list`, pack into one zip, optionally encrypt with GPG and upload
-to Azure Blob Storage, then keep only the newest N backups.
+offsite to Azure Blob Storage and/or AWS S3, then keep only the newest N backups.
 
 A failed dump aborts the run before anything is uploaded or deleted, so a bad
 run never removes an older good backup.
@@ -19,7 +19,10 @@ cron: 0 0 * * *      # 5-field cron
 remote_backup:
   azure_blob_storage:
     enable: false
-    keep: 0          # newest blobs to keep in the container, 0 = unlimited
+    keep: 0          # newest artifacts to keep at this destination, 0 = unlimited
+  aws_s3:
+    enable: false
+    keep: 0
 
 # exclude_databases:
 #   - postgres
@@ -30,22 +33,37 @@ remote_backup:
 
 `keep` counts archives, not days, but with the default daily cron the two are
 the same. The shipped `config.yaml` sets it to 14; raise it and disk use rises
-linearly, so size it against the archive size you actually observe. Remote retention
-(`remote_backup.azure_blob_storage.keep`) is counted separately, and `0` there
-means unlimited.
+linearly, so size it against the archive size you actually observe.
+
+Both destinations can be enabled at once. Each carries its own retention, counted
+separately from local retention and from each other, and `0` means unlimited. A
+destination that fails does not stop the other one: the run still uploads to
+whichever is reachable and reports the failure.
 
 Environment variables (see `.env.example`):
 
 ```
 PG_HOST, PG_PORT, PG_USER, PG_PASSWORD, PG_SSLMODE   required
 ENCRYPT_KEY        optional, GPG symmetric passphrase; output is <ts>.zip.gpg
+
 ABS_ACCOUNT_NAME   Azure storage account name        } required when
 ABS_ACCESS_KEY     Azure storage account access key  } azure_blob_storage.enable
 ABS_CONTAINER      Azure blob container              } is true
+
+S3_BUCKET          target bucket                     } required when
+AWS_REGION         bucket region                     } aws_s3.enable is true
+S3_ENDPOINT        optional, for S3-compatible stores (MinIO, Ceph, R2)
 ```
 
+S3 credentials come from the standard AWS chain — `AWS_ACCESS_KEY_ID` /
+`AWS_SECRET_ACCESS_KEY`, a mounted `~/.aws`, or an EC2/ECS/EKS instance role — so
+running on a role needs no keys in `.env` at all. `S3_ENDPOINT` also switches the
+client to path-style addressing, which is what S3-compatible stores expect; leave
+it empty for real AWS.
+
 Backups are written to `/backup/<YYYYMMDD_HHMMSS>.zip[.gpg]` locally and to
-`databases/<YYYYMMDD_HHMMSS>.zip[.gpg]` in the Azure container.
+`databases/<YYYYMMDD_HHMMSS>.zip[.gpg]` at every enabled remote destination.
+Anything else stored under that prefix is never deleted by remote retention.
 
 ## Run
 
@@ -88,8 +106,8 @@ care about under `notify.events` in `config.yaml`:
 | Event | Fires when |
 |---|---|
 | `backup_failed` | The run failed before producing a complete archive, or local cleanup failed |
-| `upload_failed` | The archive is fine locally but the upload failed |
-| `remote_cleanup_failed` | The upload worked but pruning old blobs failed |
+| `upload_failed` | The archive is fine locally but at least one remote upload failed |
+| `remote_cleanup_failed` | The upload worked but pruning old remote artifacts failed |
 | `backup_succeeded` | The run completed |
 
 A misspelled event name fails at startup. Delivery never fails a backup: a

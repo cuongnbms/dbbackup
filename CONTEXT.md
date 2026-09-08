@@ -2,7 +2,7 @@
 
 A scheduled PostgreSQL backup tool: it dumps every non-excluded database on one
 server, packs the dumps into a single encrypted archive, optionally ships that
-archive offsite, and prunes old ones.
+archive to any number of offsite destinations, and prunes old ones.
 
 ## Language
 
@@ -39,9 +39,15 @@ _Avoid_: backup file, archive, blob
 How many of the newest backup artifacts survive in the backup directory.
 _Avoid_: rotation, local keep
 
+**Remote destination**:
+One offsite place the backup artifact is shipped to — an Azure blob container or
+an S3 bucket. Any number can be enabled at once, and each stores artifacts under
+the same `databases/` prefix.
+_Avoid_: provider, backend, remote
+
 **Remote retention**:
-How many of the newest backup artifacts survive in the remote container.
-Counted separately from local retention.
+How many of the newest backup artifacts survive at one remote destination.
+Counted separately from local retention and from every other destination.
 _Avoid_: remote rotation, blob keep
 
 ### Notification

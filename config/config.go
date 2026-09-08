@@ -8,10 +8,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type AzureBlobStorage struct {
+// RemoteTarget configures one offsite destination for the backup artifact.
+// Both backends carry the same two knobs, so they share this shape.
+type RemoteTarget struct {
 	Enable bool `yaml:"enable"`
-	// Keep is the number of newest backups kept in the container. 0 means unlimited.
+	// Keep is the number of newest backup artifacts kept at the destination.
+	// 0 means unlimited. Counted separately from local retention.
 	Keep int `yaml:"keep"`
+}
+
+// RemoteBackup lists every offsite destination the artifact can be shipped to.
+// Any number of them can be enabled at once.
+type RemoteBackup struct {
+	AzureBlobStorage RemoteTarget `yaml:"azure_blob_storage"`
+	AWSS3            RemoteTarget `yaml:"aws_s3"`
 }
 
 // Notify selects which backup events produce a notification. An empty Events
@@ -28,9 +38,7 @@ type Config struct {
 	Keep             int                 `yaml:"keep"`
 	Cron             string              `yaml:"cron"`
 	Notify           Notify              `yaml:"notify"`
-	RemoteBackup     struct {
-		AzureBlobStorage AzureBlobStorage `yaml:"azure_blob_storage"`
-	} `yaml:"remote_backup"`
+	RemoteBackup     RemoteBackup        `yaml:"remote_backup"`
 }
 
 func ReadConfig(filePath string) (*Config, error) {
@@ -62,6 +70,9 @@ func (c *Config) validate() error {
 	}
 	if c.RemoteBackup.AzureBlobStorage.Keep < 0 {
 		return fmt.Errorf("remote_backup.azure_blob_storage.keep must be >= 0")
+	}
+	if c.RemoteBackup.AWSS3.Keep < 0 {
+		return fmt.Errorf("remote_backup.aws_s3.keep must be >= 0")
 	}
 	for _, e := range c.Notify.Events {
 		if !notify.Valid(e) {
