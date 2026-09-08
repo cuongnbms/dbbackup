@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"time"
 
@@ -114,7 +115,7 @@ func PerformBackup(ctx context.Context, cfg *config.Config) (*Report, error) {
 
 	rep.Stage = "dump"
 	for _, dbname := range databases {
-		if err := dumpDatabase(ctx, conn, dbname, workDir, cfg.ExcludeTables[dbname]); err != nil {
+		if err := dumpDatabase(ctx, conn, dbname, workDir, cfg.ExcludeTableData[dbname]); err != nil {
 			return rep, err
 		}
 	}
@@ -208,27 +209,36 @@ func listDatabases(ctx context.Context, conn pgConn, excludeList []string) ([]st
 	return databases, nil
 }
 
-func isExcluded(name string, excludeList []string) bool {
-	for _, exclude := range excludeList {
-		if name == exclude {
+// isExcluded reports whether name matches any of the glob patterns. A pattern
+// with no metacharacter matches exactly, so a plain list of database names
+// behaves as it always did. Malformed patterns are rejected when the config is
+// read, so a match error here can only mean no match.
+func isExcluded(name string, patterns []string) bool {
+	for _, pattern := range patterns {
+		if ok, err := path.Match(pattern, name); ok && err == nil {
 			return true
 		}
 	}
 	return false
 }
 
-func dumpArgs(conn pgConn, dbname, outFile string, excludeTables []string) []string {
+// dumpArgs excludes only the rows of the listed tables, never their
+// definitions: a dump missing a table still dumps the views and foreign keys
+// that reference it, and pg_restore --list cannot see that damage, so it would
+// surface only at restore time. The -and-children form reaches the partitions
+// of a partitioned table, which is the usual reason to skip a table's data.
+func dumpArgs(conn pgConn, dbname, outFile string, excludeTableData []string) []string {
 	args := []string{"-h", conn.Host, "-p", conn.Port, "-U", conn.User, "-F", "c", "-f", outFile}
-	for _, table := range excludeTables {
-		args = append(args, "--exclude-table="+table)
+	for _, table := range excludeTableData {
+		args = append(args, "--exclude-table-data-and-children="+table)
 	}
 	return append(args, dbname)
 }
 
-func dumpDatabase(ctx context.Context, conn pgConn, dbname, workDir string, excludeTables []string) error {
+func dumpDatabase(ctx context.Context, conn pgConn, dbname, workDir string, excludeTableData []string) error {
 	outFile := filepath.Join(workDir, dbname+".backup")
 
-	cmd := exec.CommandContext(ctx, "pg_dump", dumpArgs(conn, dbname, outFile, excludeTables)...)
+	cmd := exec.CommandContext(ctx, "pg_dump", dumpArgs(conn, dbname, outFile, excludeTableData)...)
 	cmd.Env = append(os.Environ(), "PGPASSWORD="+conn.Password, "PGSSLMODE="+conn.SSLMode)
 
 	log.Printf("Backing up database: %s", dbname)

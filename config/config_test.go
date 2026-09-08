@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -91,5 +92,36 @@ func TestReadConfigRejectsNegativeAWSS3Keep(t *testing.T) {
 	_, err := ReadConfig(write(t, "keep: 2\ncron: '0 0 * * *'\nremote_backup:\n  aws_s3:\n    keep: -1\n"))
 	if err == nil {
 		t.Fatal("expected an error for a negative aws_s3.keep")
+	}
+}
+
+func TestReadConfigParsesExcludeTableData(t *testing.T) {
+	cfg, err := ReadConfig(write(t, "keep: 2\ncron: '0 0 * * *'\nexclude_table_data:\n  demo:\n    - public.django_session\n    - public.log_*\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := cfg.ExcludeTableData["demo"]
+	if len(got) != 2 || got[0] != "public.django_session" || got[1] != "public.log_*" {
+		t.Fatalf("unexpected exclude_table_data: %q", got)
+	}
+}
+
+// exclude_tables was removed: it dropped the table definition too, which left
+// dependent views and foreign keys unrestorable. Silently ignoring the old key
+// would grow every archive back to full size without a word, so it is an error.
+func TestReadConfigRejectsRemovedExcludeTablesKey(t *testing.T) {
+	_, err := ReadConfig(write(t, "keep: 2\ncron: '0 0 * * *'\nexclude_tables:\n  demo:\n    - users\n"))
+	if err == nil {
+		t.Fatal("expected an error for the removed exclude_tables key")
+	}
+	if !strings.Contains(err.Error(), "exclude_table_data") {
+		t.Fatalf("error must name the replacement key, got: %v", err)
+	}
+}
+
+func TestReadConfigRejectsMalformedDatabasePattern(t *testing.T) {
+	_, err := ReadConfig(write(t, "keep: 2\ncron: '0 0 * * *'\nexclude_databases:\n  - 'test_['\n"))
+	if err == nil {
+		t.Fatal("expected an error for a malformed exclude_databases pattern")
 	}
 }

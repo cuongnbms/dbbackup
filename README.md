@@ -26,10 +26,47 @@ remote_backup:
 
 # exclude_databases:
 #   - postgres
-# exclude_tables:
+#   - "test_*"
+# exclude_table_data:
 #   demo:
-#     - users
+#     - public.django_session
+#     - public.log_*
 ```
+
+### Exclusions
+
+`exclude_databases` skips whole databases. Each entry is a glob pattern matched
+against the database name — `*`, `?` and `[0-9]` all work, and a pattern with no
+metacharacter matches exactly, so a plain list of names behaves as it reads.
+Template databases are always skipped. A malformed pattern fails at startup
+rather than silently matching nothing.
+
+`exclude_table_data` drops the *rows* of the listed tables while still dumping
+the tables themselves. That distinction matters: a dump missing a table still
+contains every view and foreign key that references it, and since `pg_restore
+--list` only reads the archive's table of contents, such a dump verifies
+cleanly and then fails at restore time, possibly months later. Keeping the
+definitions means the restore stays consistent; only the data is gone.
+
+```yaml
+exclude_table_data:
+  demo:
+    - public.django_session
+    - public.log_*
+```
+
+Entries are pg_dump table patterns, so wildcards work. Two rules to know:
+
+- **Qualify with a schema.** An unqualified pattern only matches tables visible
+  in the connection's `search_path`, so `users` finds `public.users` but not
+  `audit.users`. Write `audit.users`, or `*.users` for every schema.
+- **Partitions are included.** An entry naming a partitioned table also empties
+  its partitions and inheritance children, which is the usual reason to exclude
+  a table's data in the first place.
+
+Excluding a table's data is safe for leaf tables — logs, sessions, caches. If
+rows in another table reference the emptied one, creating that foreign key
+fails on restore.
 
 `keep` counts archives, not days, but with the default daily cron the two are
 the same. The shipped `config.yaml` sets it to 14; raise it and disk use rises

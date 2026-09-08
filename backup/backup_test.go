@@ -9,19 +9,39 @@ import (
 )
 
 func TestIsExcluded(t *testing.T) {
-	if !isExcluded("postgres", []string{"postgres", "template0"}) {
-		t.Fatal("expected postgres to be excluded")
+	// A pattern without a metacharacter still has to match exactly, so an
+	// existing exclude_databases list keeps behaving as it always did.
+	cases := []struct {
+		name     string
+		patterns []string
+		want     bool
+	}{
+		{"postgres", []string{"postgres", "template0"}, true},
+		{"app", []string{"postgres"}, false},
+		{"test_a", []string{"test_*"}, true},
+		{"atest_a", []string{"test_*"}, false},
+		{"test_", []string{"test_*"}, true},
+		{"shard_7", []string{"shard_[0-9]"}, true},
+		{"shard_x", []string{"shard_[0-9]"}, false},
+		{"app_dev", []string{"app_de?"}, true},
+		{"app", []string{"prod", "app_*"}, false},
 	}
-	if isExcluded("app", []string{"postgres"}) {
-		t.Fatal("expected app not to be excluded")
+	for _, c := range cases {
+		if got := isExcluded(c.name, c.patterns); got != c.want {
+			t.Errorf("isExcluded(%q, %q) = %v, want %v", c.name, c.patterns, got, c.want)
+		}
 	}
 }
 
-func TestDumpArgsExcludeTablesAreSeparateArgs(t *testing.T) {
-	got := dumpArgs(pgConn{Host: "h", Port: "5432", User: "u"}, "app", "/backup/x/app.backup", []string{"users", "logs"})
+// The table keeps its definition and loses only its rows, and the exclusion
+// reaches partitions and inheritance children, which is what makes it usable
+// for a partitioned log table.
+func TestDumpArgsExcludeTableDataAreSeparateArgs(t *testing.T) {
+	got := dumpArgs(pgConn{Host: "h", Port: "5432", User: "u"}, "app", "/backup/x/app.backup", []string{"public.users", "public.log_*"})
 	want := []string{
 		"-h", "h", "-p", "5432", "-U", "u", "-F", "c", "-f", "/backup/x/app.backup",
-		"--exclude-table=users", "--exclude-table=logs",
+		"--exclude-table-data-and-children=public.users",
+		"--exclude-table-data-and-children=public.log_*",
 		"app",
 	}
 	if !reflect.DeepEqual(got, want) {

@@ -19,12 +19,23 @@ remote_backup:
     enable: false
     keep: 0
 
+# Databases never dumped. Each entry is a glob pattern matched against the
+# database name; a pattern without a metacharacter matches exactly. Template
+# databases are always skipped.
 # exclude_databases:
 #   - postgres
+#   - "test_*"
 
-# exclude_tables:
+# Tables whose rows are left out of a database's dump. The table itself is
+# still dumped, so views and foreign keys that reference it still restore.
+# Entries are pg_dump table patterns and reach partitions of a partitioned
+# table. Qualify with a schema: an unqualified pattern only matches tables
+# visible in the connection's search_path, so `users` finds public.users but
+# not audit.users -- write `audit.users` or `*.users` for those.
+# exclude_table_data:
 #   demo:
-#     - users
+#     - public.django_session
+#     - public.log_*
 
 # Which events produce a Slack/Discord notification. Omit or leave empty to
 # disable. Set SLACK_WEBHOOK_URL and/or DISCORD_WEBHOOK_URL to choose where

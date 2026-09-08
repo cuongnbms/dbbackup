@@ -27,7 +27,7 @@ func fakePgTools(t *testing.T, dumpExit string) string {
 	return argsFile
 }
 
-func TestDumpDatabasePassesExcludeTablesAsSeparateArgv(t *testing.T) {
+func TestDumpDatabasePassesExcludeTableDataAsSeparateArgv(t *testing.T) {
 	argsFile := fakePgTools(t, "0")
 	conn := pgConn{Host: "h", Port: "1", User: "u", Password: "p"}
 	if err := dumpDatabase(context.Background(), conn, "demo", t.TempDir(), []string{"users", "logs"}); err != nil {
@@ -40,11 +40,11 @@ func TestDumpDatabasePassesExcludeTablesAsSeparateArgv(t *testing.T) {
 	argv := strings.Split(strings.TrimSpace(string(raw)), "\n")
 	var excludes []string
 	for _, a := range argv {
-		if strings.HasPrefix(a, "--exclude-table=") {
+		if strings.HasPrefix(a, "--exclude-table-data-and-children=") {
 			excludes = append(excludes, a)
 		}
 	}
-	if len(excludes) != 2 || excludes[0] != "--exclude-table=users" || excludes[1] != "--exclude-table=logs" {
+	if len(excludes) != 2 || excludes[0] != "--exclude-table-data-and-children=users" || excludes[1] != "--exclude-table-data-and-children=logs" {
 		t.Fatalf("exclude flags not passed as separate argv: %q", argv)
 	}
 	if argv[len(argv)-1] != "demo" {
