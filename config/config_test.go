@@ -36,3 +36,30 @@ func TestReadConfigRejectsMissingCron(t *testing.T) {
 		t.Fatal("expected error when cron is missing")
 	}
 }
+
+func TestReadConfigParsesNotifyEvents(t *testing.T) {
+	cfg, err := ReadConfig(write(t, "keep: 2\ncron: '0 0 * * *'\nnotify:\n  events:\n    - backup_failed\n    - upload_failed\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Notify.Events) != 2 || cfg.Notify.Events[0] != "backup_failed" {
+		t.Fatalf("unexpected events: %q", cfg.Notify.Events)
+	}
+}
+
+func TestReadConfigRejectsUnknownNotifyEvent(t *testing.T) {
+	_, err := ReadConfig(write(t, "keep: 2\ncron: '0 0 * * *'\nnotify:\n  events:\n    - backup_faild\n"))
+	if err == nil {
+		t.Fatal("expected an error for a misspelled event name")
+	}
+}
+
+func TestReadConfigAllowsNoNotifyBlock(t *testing.T) {
+	cfg, err := ReadConfig(write(t, "keep: 2\ncron: '0 0 * * *'\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Notify.Events) != 0 {
+		t.Fatalf("expected notification to be off by default, got %q", cfg.Notify.Events)
+	}
+}

@@ -19,3 +19,13 @@ remote_backup:
 # exclude_tables:
 #   demo:
 #     - users
+
+# Which events produce a Slack/Discord notification. Omit or leave empty to
+# disable. Set SLACK_WEBHOOK_URL and/or DISCORD_WEBHOOK_URL to choose where
+# they go.
+notify:
+  events:
+    - backup_failed
+    - upload_failed
+    - remote_cleanup_failed
+    # - backup_succeeded

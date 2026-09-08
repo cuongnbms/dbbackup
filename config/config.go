@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"dbbackup/notify"
 	"gopkg.in/yaml.v3"
 )
 
@@ -13,6 +14,12 @@ type AzureBlobStorage struct {
 	Keep int `yaml:"keep"`
 }
 
+// Notify selects which backup events produce a notification. An empty Events
+// list disables notification entirely.
+type Notify struct {
+	Events []string `yaml:"events"`
+}
+
 type Config struct {
 	// BackupDir is the local directory holding backups. Defaults to /backup.
 	BackupDir        string              `yaml:"backup_dir"`
@@ -20,6 +27,7 @@ type Config struct {
 	ExcludeTables    map[string][]string `yaml:"exclude_tables"`
 	Keep             int                 `yaml:"keep"`
 	Cron             string              `yaml:"cron"`
+	Notify           Notify              `yaml:"notify"`
 	RemoteBackup     struct {
 		AzureBlobStorage AzureBlobStorage `yaml:"azure_blob_storage"`
 	} `yaml:"remote_backup"`
@@ -54,6 +62,11 @@ func (c *Config) validate() error {
 	}
 	if c.RemoteBackup.AzureBlobStorage.Keep < 0 {
 		return fmt.Errorf("remote_backup.azure_blob_storage.keep must be >= 0")
+	}
+	for _, e := range c.Notify.Events {
+		if !notify.Valid(e) {
+			return fmt.Errorf("notify.events contains unknown event %q", e)
+		}
 	}
 	return nil
 }
