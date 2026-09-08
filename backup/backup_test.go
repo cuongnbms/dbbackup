@@ -1,0 +1,54 @@
+package backup
+
+import (
+	"reflect"
+	"testing"
+)
+
+func TestIsExcluded(t *testing.T) {
+	if !isExcluded("postgres", []string{"postgres", "template0"}) {
+		t.Fatal("expected postgres to be excluded")
+	}
+	if isExcluded("app", []string{"postgres"}) {
+		t.Fatal("expected app not to be excluded")
+	}
+}
+
+func TestDumpArgsExcludeTablesAreSeparateArgs(t *testing.T) {
+	got := dumpArgs(pgConn{Host: "h", Port: "5432", User: "u"}, "app", "/backup/x/app.backup", []string{"users", "logs"})
+	want := []string{
+		"-h", "h", "-p", "5432", "-U", "u", "-F", "c", "-f", "/backup/x/app.backup",
+		"--exclude-table=users", "--exclude-table=logs",
+		"app",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestDumpArgsNoExclude(t *testing.T) {
+	got := dumpArgs(pgConn{Host: "h", Port: "5432", User: "u"}, "app", "/f", nil)
+	if got[len(got)-1] != "app" || len(got) != 11 {
+		t.Fatalf("unexpected args: %q", got)
+	}
+}
+
+func TestConnURLEscapesPassword(t *testing.T) {
+	c := pgConn{Host: "db", Port: "5432", User: "u", Password: "p a'ss@w/ord", SSLMode: "disable"}
+	got := c.url()
+	want := "postgres://u:p%20a%27ss%40w%2Ford@db:5432/postgres?sslmode=disable"
+	if got != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+}
+
+func TestPgConnFromEnvMissing(t *testing.T) {
+	t.Setenv("PG_HOST", "")
+	t.Setenv("PG_PORT", "5432")
+	t.Setenv("PG_USER", "u")
+	t.Setenv("PG_PASSWORD", "p")
+	t.Setenv("PG_SSLMODE", "disable")
+	if _, err := pgConnFromEnv(); err == nil {
+		t.Fatal("expected error for missing PG_HOST")
+	}
+}

@@ -7,23 +7,20 @@ import (
 	"strings"
 )
 
+// EncryptFile writes filePath+".gpg" (symmetric AES256) and removes the plaintext.
 func EncryptFile(filePath, passphrase string) error {
-	// GPG: echo "<passphrase>" | gpg --batch --yes --passphrase-fd 0 --symmetric --cipher-algo AES256 <filePath>
 	cmd := exec.Command(
 		"gpg", "--batch", "--yes", "--passphrase-fd", "0", "--symmetric", "--cipher-algo", "AES256",
 		"--output", filePath+".gpg",
 		filePath,
 	)
 	cmd.Stdin = strings.NewReader(passphrase)
-	err := cmd.Run()
-	if err != nil {
-		return fmt.Errorf("failed to encrypt file: %v", err)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("encrypt %s: %w: %s", filePath, err, output)
 	}
 
-	err = os.Remove(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to remove original file after encryption: %v", err)
+	if err := os.Remove(filePath); err != nil {
+		return fmt.Errorf("remove plaintext after encryption: %w", err)
 	}
-
 	return nil
 }

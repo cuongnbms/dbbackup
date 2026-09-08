@@ -5,47 +5,114 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path"
+	"path/filepath"
+	"sort"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/container"
 )
 
-func UploadToABS(filePath string) {
-	// Load environment variables
+const blobPrefix = "databases/"
+
+type absTarget struct {
+	client    *azblob.Client
+	container string
+}
+
+func absFromEnv() (*absTarget, error) {
 	accountName := os.Getenv("ABS_ACCOUNT_NAME")
 	accountKey := os.Getenv("ABS_ACCESS_KEY")
-	absContainer := os.Getenv("ABS_CONTAINER")
-
-	if accountName == "" || accountKey == "" || absContainer == "" {
-		log.Fatal("Missing required environment variables: ABS_ACCOUNT_NAME, ABS_ACCESS_KEY, or ABS_CONTAINER")
+	containerName := os.Getenv("ABS_CONTAINER")
+	if accountName == "" || accountKey == "" || containerName == "" {
+		return nil, fmt.Errorf("missing required environment variables: ABS_ACCOUNT_NAME, ABS_ACCESS_KEY, ABS_CONTAINER")
 	}
 
-	// Create a shared key credential
 	cred, err := azblob.NewSharedKeyCredential(accountName, accountKey)
 	if err != nil {
-		log.Fatalf("Failed to create shared key credential: %v", err)
+		return nil, fmt.Errorf("create shared key credential: %w", err)
 	}
-
-	// Create a blob service client
 	serviceURL := fmt.Sprintf("https://%s.blob.core.windows.net/", accountName)
 	client, err := azblob.NewClientWithSharedKeyCredential(serviceURL, cred, nil)
 	if err != nil {
-		log.Fatalf("Failed to create Azure Blob Storage client: %v", err)
+		return nil, fmt.Errorf("create Azure Blob Storage client: %w", err)
 	}
-
-	// Read the file
-	fileData, err := os.ReadFile(filePath)
-	if err != nil {
-		log.Fatalf("Failed to read file: %v", err)
-	}
-
-	// Generate blob name (using filePath's name for example)
-	blobName := "databases/" + filePath
-
-	// Upload the file
-	_, err = client.UploadBuffer(context.Background(), absContainer, blobName, fileData, nil)
-	if err != nil {
-		log.Fatalf("Upload buffer to Azure Blob Storage failed: %v", err)
-	}
-
-	log.Printf("File uploaded successfully to Azure Blob Storage: %s", blobName)
+	return &absTarget{client: client, container: containerName}, nil
 }
+
+func blobName(filePath string) string {
+	return blobPrefix + filepath.Base(filePath)
+}
+
+// UploadToABS streams filePath to Azure Blob Storage under databases/<basename>.
+func UploadToABS(ctx context.Context, filePath string) error {
+	target, err := absFromEnv()
+	if err != nil {
+		return err
+	}
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("open backup file: %w", err)
+	}
+	defer file.Close()
+
+	name := blobName(filePath)
+	if _, err := target.client.UploadFile(ctx, target.container, name, file, nil); err != nil {
+		return fmt.Errorf("upload %s to Azure Blob Storage: %w", name, err)
+	}
+	log.Printf("File uploaded to Azure Blob Storage: %s", name)
+	return nil
+}
+
+// blobsToDelete returns the backup blobs that fall outside the keepCount
+// newest. Blobs not named like a backup archive are never returned.
+// keepCount <= 0 means keep everything.
+func blobsToDelete(names []string, keepCount int) []string {
+	if keepCount <= 0 {
+		return nil
+	}
+	var archives []string
+	for _, name := range names {
+		if backupFileRe.MatchString(path.Base(name)) {
+			archives = append(archives, name)
+		}
+	}
+	if len(archives) <= keepCount {
+		return nil
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(archives)))
+	return archives[keepCount:]
+}
+
+// CleanupRemoteBackups keeps the keepCount newest blobs under databases/.
+func CleanupRemoteBackups(ctx context.Context, keepCount int) error {
+	target, err := absFromEnv()
+	if err != nil {
+		return err
+	}
+
+	var names []string
+	pager := target.client.NewListBlobsFlatPager(target.container, &container.ListBlobsFlatOptions{Prefix: to(blobPrefix)})
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return fmt.Errorf("list remote backups: %w", err)
+		}
+		for _, item := range page.Segment.BlobItems {
+			if item.Name != nil {
+				names = append(names, *item.Name)
+			}
+		}
+	}
+
+	for _, name := range blobsToDelete(names, keepCount) {
+		log.Printf("Deleting old remote backup: %s", name)
+		if _, err := target.client.DeleteBlob(ctx, target.container, name, nil); err != nil {
+			return fmt.Errorf("delete remote backup %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func to[T any](v T) *T { return &v }

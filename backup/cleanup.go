@@ -1,41 +1,57 @@
 package backup
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
-	"time"
 )
 
-func CleanupOldBackups(backupDir string, keepCount int) {
-	files, err := filepath.Glob(filepath.Join(backupDir, "*"))
+// Only files this tool produced are ever deleted; anything else in the
+// backup directory is left alone.
+var (
+	backupFileRe = regexp.MustCompile(`^\d{8}_\d{6}\.zip(\.gpg)?$`)
+	backupDirRe  = regexp.MustCompile(`^\d{8}_\d{6}$`)
+)
+
+// CleanupOldBackups keeps the keepCount newest backup archives and deletes the
+// rest. Leftover dump directories from an interrupted run are removed too.
+func CleanupOldBackups(backupDir string, keepCount int) error {
+	if keepCount < 1 {
+		return fmt.Errorf("keep must be >= 1, got %d", keepCount)
+	}
+
+	entries, err := os.ReadDir(backupDir)
 	if err != nil {
-		log.Fatalf("Failed to list backup files: %v", err)
+		return fmt.Errorf("list backup dir: %w", err)
 	}
 
-	type fileInfo struct {
-		path string
-		time time.Time
-	}
-	var fileInfos []fileInfo
-	for _, file := range files {
-		info, err := os.Stat(file)
-		if err != nil {
-			log.Printf("Failed to stat file: %s, error: %v", file, err)
-			continue
-		}
-		fileInfos = append(fileInfos, fileInfo{path: file, time: info.ModTime()})
-	}
-
-	sort.Slice(fileInfos, func(i, j int) bool {
-		return fileInfos[i].time.After(fileInfos[j].time)
-	})
-
-	for i, file := range fileInfos {
-		if i >= keepCount {
-			log.Printf("Deleting old backup: %s", file.path)
-			os.Remove(file.path)
+	var archives []string
+	for _, e := range entries {
+		name := e.Name()
+		path := filepath.Join(backupDir, name)
+		switch {
+		case e.IsDir() && backupDirRe.MatchString(name):
+			log.Printf("Removing leftover dump directory: %s", path)
+			if err := os.RemoveAll(path); err != nil {
+				log.Printf("Failed to remove %s: %v", path, err)
+			}
+		case e.Type().IsRegular() && backupFileRe.MatchString(name):
+			archives = append(archives, name)
 		}
 	}
+
+	// Names start with a timestamp, so lexical order is chronological.
+	sort.Sort(sort.Reverse(sort.StringSlice(archives)))
+
+	for _, name := range archives[min(keepCount, len(archives)):] {
+		path := filepath.Join(backupDir, name)
+		log.Printf("Deleting old backup: %s", path)
+		if err := os.Remove(path); err != nil {
+			log.Printf("Failed to delete %s: %v", path, err)
+		}
+	}
+	return nil
 }

@@ -1,10 +1,17 @@
-# config template
+# Number of newest local backups to keep (must be >= 1).
 keep: 2
+
+# Schedule in standard 5-field cron syntax.
 cron: 0 0 * * *
+
+# Local backup directory inside the container (default /backup).
+# backup_dir: /backup
 
 remote_backup:
   azure_blob_storage:
     enable: false
+    # Number of newest blobs to keep under databases/ in the container. 0 = unlimited.
+    keep: 0
 
 # exclude_databases:
 #   - postgres

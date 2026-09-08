@@ -1,24 +1,26 @@
-FROM golang:1.22.5 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.22.12-alpine3.21 AS builder
+
+ARG TARGETOS
+ARG TARGETARCH
 
 WORKDIR /app
 
 COPY go.mod go.sum ./
-
 RUN go mod download
 
 COPY . .
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -trimpath -ldflags="-s -w" -o /out/backup .
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o app main.go
+# Pin the runtime image so pg_dump/pg_restore versions are reproducible.
+# pg_dump 17 can dump any server <= 17; bump this when your server is newer.
+FROM alpine:3.21
 
-FROM alpine:latest
-
-RUN apk --no-cache add \
-    postgresql-client gnupg
+RUN apk --no-cache add postgresql17-client gnupg tzdata
 
 WORKDIR /app
 
-COPY ./config.yaml ./
-COPY --from=builder /app/app /usr/bin/backup
-RUN chmod +x /usr/bin/backup
+COPY config.yaml ./
+COPY --from=builder /out/backup /usr/bin/backup
 RUN mkdir -p /backup
+
 CMD ["backup"]

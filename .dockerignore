@@ -1,4 +1,9 @@
 backup_data/
 .DS_Store
+.env
+.env.example
+.git/
+.github/
 docker-compose.yml
 README.md
+Makefile

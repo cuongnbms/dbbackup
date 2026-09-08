@@ -1,24 +1,14 @@
 services:
-
   dbbackup:
     build:
       context: .
       dockerfile: Dockerfile
-    image: cuongnb14/db-backup:1.1
+    image: cuongnb14/db-backup:1.3
     container_name: dbbackup
-    environment:
-      PG_HOST: devhost
-      PG_PORT: 5432
-      PG_USER: dev
-      PG_PASSWORD: dev
-      PG_SSLMODE: disable
-
-      ENCRYPT_KEY: "abc"
-
-      ABS_URL: 
-      ABS_CONTAINER: 
-      ABS_SAS:
-
+    restart: unless-stopped
+    # Copy .env.example to .env and fill in real values. Never commit .env.
+    env_file:
+      - .env
     volumes:
       - ./backup_data:/backup
-      - ./config.yaml:/app/config.yaml
+      - ./config.yaml:/app/config.yaml:ro
