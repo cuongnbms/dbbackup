@@ -40,7 +40,18 @@ echo "CREATE ROLE app;" > "$out"
 `
 
 const alwaysFails = `#!/bin/sh
-echo "pg_dumpall: error: connection refused" >&2
+nopw=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --no-role-passwords) nopw=1 ;;
+  esac
+  shift
+done
+if [ "$nopw" != "1" ]; then
+  echo "pg_dumpall: error: first attempt failed" >&2
+else
+  echo "pg_dumpall: error: second attempt failed" >&2
+fi
 exit 1
 `
 
@@ -93,6 +104,12 @@ func TestDumpGlobalsReportsFirstErrorWhenBothAttemptsFail(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "pg_dumpall") {
 		t.Fatalf("error should name the command, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "first attempt failed") {
+		t.Fatalf("error should contain first attempt message, got %v", err)
+	}
+	if strings.Contains(err.Error(), "second attempt failed") {
+		t.Fatalf("error should not contain second attempt message, got %v", err)
 	}
 }
 
