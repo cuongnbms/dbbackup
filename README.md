@@ -158,6 +158,17 @@ care about under `notify.events` in `config.yaml`:
 A misspelled event name fails at startup. Delivery never fails a backup: a
 webhook error is logged and the run's own result is unaffected.
 
+When several servers post to the same channel, set `INSTANCE_NAME` to tell them
+apart. The title otherwise names only `PG_HOST:PG_PORT`, which is `db:5432` on
+every server that reaches Postgres through a compose service of that name:
+
+```
+❌ [prod-hanoi-01] db-backup failed — db:5432
+✅ [prod-hanoi-01] db-backup ok — db:5432
+```
+
+Leave it unset on a single server and the titles stay as they were.
+
 ## Development
 
 ```sh

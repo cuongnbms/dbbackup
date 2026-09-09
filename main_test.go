@@ -82,7 +82,7 @@ func TestEventsForNilReport(t *testing.T) {
 
 func TestMessageForFailureNamesTheStage(t *testing.T) {
 	rep := &backup.Report{Host: "db:5432", Stage: "cleanup"}
-	msg := messageFor(notify.BackupFailed, rep, errors.New("disk full"))
+	msg := messageFor(notify.BackupFailed, rep, errors.New("disk full"), "")
 	if !strings.Contains(msg.Title, "db:5432") {
 		t.Fatalf("title should name the server: %q", msg.Title)
 	}
@@ -107,7 +107,7 @@ func TestMessageForSuccessCarriesTheNumbers(t *testing.T) {
 		Size:      24 * 1024 * 1024,
 		Duration:  1900 * time.Millisecond,
 	}
-	msg := messageFor(notify.BackupSucceeded, rep, nil)
+	msg := messageFor(notify.BackupSucceeded, rep, nil, "")
 	for _, want := range []string{"3 databases", "24.0 MB", "1.9s", "/backup/20260908_000000.zip.gpg"} {
 		if !strings.Contains(msg.Title+msg.Body, want) {
 			t.Fatalf("success message is missing %q: %q / %q", want, msg.Title, msg.Body)
@@ -160,10 +160,43 @@ func TestMessageForUploadFailureNamesEveryDestination(t *testing.T) {
 			errors.New("AWS S3: access denied"),
 		),
 	}
-	msg := messageFor(notify.UploadFailed, rep, rep.UploadErr)
+	msg := messageFor(notify.UploadFailed, rep, rep.UploadErr, "")
 	for _, want := range []string{"Azure Blob Storage", "container missing", "AWS S3", "access denied"} {
 		if !strings.Contains(msg.Body, want) {
 			t.Fatalf("body is missing %q: %q", want, msg.Body)
 		}
+	}
+}
+
+// Several servers can share one webhook channel, and there every title reads
+// the same "db:5432" because that is the compose service name. INSTANCE_NAME
+// labels the run so an operator can tell them apart, and it has to reach every
+// event: a success from the wrong server is as confusing as a failure.
+func TestMessageForCarriesTheInstanceOnEveryEvent(t *testing.T) {
+	rep := &backup.Report{
+		Host:             "db:5432",
+		UploadErr:        errors.New("access denied"),
+		RemoteCleanupErr: errors.New("list failed"),
+	}
+	for _, ev := range []notify.Event{
+		notify.BackupFailed,
+		notify.UploadFailed,
+		notify.RemoteCleanupFailed,
+		notify.BackupSucceeded,
+	} {
+		msg := messageFor(ev, rep, errors.New("boom"), "prod-hanoi-01")
+		if !strings.Contains(msg.Title, "[prod-hanoi-01]") {
+			t.Fatalf("%s title should carry the instance: %q", ev, msg.Title)
+		}
+	}
+}
+
+// An unset INSTANCE_NAME has to leave the title byte-identical to what it was
+// before the label existed: no empty brackets, no doubled separator.
+func TestMessageForWithoutInstanceKeepsThePlainTitle(t *testing.T) {
+	rep := &backup.Report{Host: "db:5432", Stage: "dump"}
+	msg := messageFor(notify.BackupFailed, rep, errors.New("boom"), "")
+	if want := "❌ db-backup failed — db:5432"; msg.Title != want {
+		t.Fatalf("title = %q, want %q", msg.Title, want)
 	}
 }

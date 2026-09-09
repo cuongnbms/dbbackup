@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -36,6 +37,7 @@ func main() {
 		log.Println("Warning: notify.events is configured but neither SLACK_WEBHOOK_URL nor DISCORD_WEBHOOK_URL is set")
 	}
 	notifier := notify.New(senders, cfg.Notify.Events, os.Getenv("PG_PASSWORD"))
+	instance := strings.TrimSpace(os.Getenv("INSTANCE_NAME"))
 
 	run := func() error {
 		rep, err := backup.PerformBackup(ctx, cfg)
@@ -49,7 +51,7 @@ func main() {
 				context.WithoutCancel(ctx),
 				time.Duration(len(senders)+1)*notify.RequestTimeout,
 			)
-			notifier.Notify(nctx, messageFor(ev, rep, err))
+			notifier.Notify(nctx, messageFor(ev, rep, err, instance))
 			cancel()
 		}
 		return err
@@ -116,7 +118,7 @@ func eventsFor(rep *backup.Report, err error) []notify.Event {
 	return events
 }
 
-func messageFor(ev notify.Event, rep *backup.Report, err error) notify.Message {
+func messageFor(ev notify.Event, rep *backup.Report, err error, instance string) notify.Message {
 	if rep == nil {
 		rep = &backup.Report{}
 	}
@@ -124,19 +126,19 @@ func messageFor(ev notify.Event, rep *backup.Report, err error) notify.Message {
 	case notify.UploadFailed:
 		return notify.Message{
 			Event: ev,
-			Title: fmt.Sprintf("❌ db-backup upload failed — %s", rep.Host),
+			Title: title("❌", "db-backup upload failed", instance, rep.Host),
 			Body:  fmt.Sprintf("artifact: %s\n%v", rep.Artifact, rep.UploadErr),
 		}
 	case notify.RemoteCleanupFailed:
 		return notify.Message{
 			Event: ev,
-			Title: fmt.Sprintf("⚠️ db-backup remote cleanup failed — %s", rep.Host),
+			Title: title("⚠️", "db-backup remote cleanup failed", instance, rep.Host),
 			Body:  fmt.Sprintf("%v", rep.RemoteCleanupErr),
 		}
 	case notify.BackupSucceeded:
 		return notify.Message{
 			Event: ev,
-			Title: fmt.Sprintf("✅ db-backup ok — %s", rep.Host),
+			Title: title("✅", "db-backup ok", instance, rep.Host),
 			Body: fmt.Sprintf("%d databases · %s · %s\n%s",
 				len(rep.Databases), humanSize(rep.Size),
 				rep.Duration.Round(100*time.Millisecond), rep.Artifact),
@@ -144,10 +146,23 @@ func messageFor(ev notify.Event, rep *backup.Report, err error) notify.Message {
 	default:
 		return notify.Message{
 			Event: notify.BackupFailed,
-			Title: fmt.Sprintf("❌ db-backup failed — %s", rep.Host),
+			Title: title("❌", "db-backup failed", instance, rep.Host),
 			Body:  fmt.Sprintf("stage: %s\n%v", rep.Stage, err),
 		}
 	}
+}
+
+// title formats one notification headline. instance is the operator's label for
+// this deployment, from INSTANCE_NAME; several servers sharing one webhook
+// channel otherwise all report the same host, because host is the Postgres
+// address as this container sees it ("db:5432" under compose) and not something
+// that distinguishes them. An empty instance is left out entirely, so a
+// single-server setup keeps the title it has always had.
+func title(icon, what, instance, host string) string {
+	if instance != "" {
+		icon += " [" + instance + "]"
+	}
+	return fmt.Sprintf("%s %s — %s", icon, what, host)
 }
 
 // humanSize renders n for a notification body.
